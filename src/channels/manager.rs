@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use tracing::info;
 
-use crate::channel::Channel;
-use crate::config::AppConfig;
-use crate::error::Result;
-use crate::telegram::TelegramChannel;
+use crate::channels::base::Channel;
+use crate::channels::telegram::TelegramChannel;
+use crate::core::config::AppConfig;
+use crate::core::error::Result;
 
 /// Manages channel lifecycles.
 ///
@@ -38,7 +38,7 @@ impl ChannelManager {
     /// Run all registered channels. Blocks until all channels complete or error.
     pub async fn run(&mut self) -> Result<()> {
         if self.channels.is_empty() {
-            return Err(crate::error::CrabClawError::Config(
+            return Err(crate::core::error::CrabClawError::Config(
                 "no channels enabled; set BUB_TELEGRAM_TOKEN to enable Telegram".to_string(),
             ));
         }

@@ -56,10 +56,10 @@ pub trait Channel: Send + Sync {
     fn name(&self) -> &str;
 
     /// Start the channel and begin processing messages.
-    async fn start(&mut self) -> crate::error::Result<()>;
+    async fn start(&mut self) -> crate::core::error::Result<()>;
 
     /// Stop the channel gracefully.
-    async fn stop(&mut self) -> crate::error::Result<()>;
+    async fn stop(&mut self) -> crate::core::error::Result<()>;
 }
 
 #[cfg(test)]

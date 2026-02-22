@@ -101,13 +101,13 @@ pub fn builtin_registry() -> ToolRegistry {
 /// Generate OpenAI-compatible tool definitions from the registry.
 ///
 /// Each tool is exposed as a function with no required parameters.
-pub fn to_tool_definitions(registry: &ToolRegistry) -> Vec<crate::api_types::ToolDefinition> {
+pub fn to_tool_definitions(registry: &ToolRegistry) -> Vec<crate::llm::api_types::ToolDefinition> {
     registry
         .list()
         .into_iter()
-        .map(|tool| crate::api_types::ToolDefinition {
+        .map(|tool| crate::llm::api_types::ToolDefinition {
             tool_type: "function".to_string(),
-            function: crate::api_types::FunctionDefinition {
+            function: crate::llm::api_types::FunctionDefinition {
                 name: tool.name.clone(),
                 description: tool.description.clone(),
                 parameters: serde_json::json!({
@@ -126,7 +126,7 @@ pub fn to_tool_definitions(registry: &ToolRegistry) -> Vec<crate::api_types::Too
 pub fn execute_tool(
     name: &str,
     _args: &str,
-    tape: &crate::tape::TapeStore,
+    tape: &crate::tape::store::TapeStore,
     workspace: &std::path::Path,
 ) -> String {
     match name {
@@ -163,7 +163,7 @@ pub fn execute_tool(
             }
         }
         "skills" => {
-            use crate::skills::discover_skills;
+            use crate::tools::skills::discover_skills;
             let skills = discover_skills(workspace);
             if skills.is_empty() {
                 "No skills discovered.".to_string()

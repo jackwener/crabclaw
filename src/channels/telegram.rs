@@ -5,11 +5,11 @@ use teloxide::prelude::*;
 use teloxide::types::{ChatAction, MediaKind, MessageKind};
 use tracing::{debug, info, warn};
 
-use crate::channel::{Channel, ChannelResponse};
-use crate::config::AppConfig;
-use crate::context::build_messages;
-use crate::router::route_user;
-use crate::tape::TapeStore;
+use crate::channels::base::{Channel, ChannelResponse};
+use crate::core::config::AppConfig;
+use crate::core::context::build_messages;
+use crate::core::router::route_user;
+use crate::tape::store::TapeStore;
 
 /// Telegram channel adapter using long polling.
 ///
@@ -35,12 +35,14 @@ impl Channel for TelegramChannel {
         "telegram"
     }
 
-    async fn start(&mut self) -> crate::error::Result<()> {
+    async fn start(&mut self) -> crate::core::error::Result<()> {
         let token = self
             .config
             .telegram_token
             .as_ref()
-            .ok_or_else(|| crate::error::CrabClawError::Config("TELEGRAM_TOKEN not set".into()))?
+            .ok_or_else(|| {
+                crate::core::error::CrabClawError::Config("TELEGRAM_TOKEN not set".into())
+            })?
             .clone();
 
         info!("telegram.start");
@@ -67,7 +69,7 @@ impl Channel for TelegramChannel {
         Ok(())
     }
 
-    async fn stop(&mut self) -> crate::error::Result<()> {
+    async fn stop(&mut self) -> crate::core::error::Result<()> {
         info!("telegram.stop");
         Ok(())
     }
@@ -231,8 +233,8 @@ pub async fn process_message(
     // If we need the model, send the request (with tool calling loop)
     if route_result.enter_model {
         // Build tool definitions from the registry
-        let registry = crate::tools::builtin_registry();
-        let tool_defs = crate::tools::to_tool_definitions(&registry);
+        let registry = crate::tools::registry::builtin_registry();
+        let tool_defs = crate::tools::registry::to_tool_definitions(&registry);
         let tools = if tool_defs.is_empty() {
             None
         } else {
@@ -242,14 +244,14 @@ pub async fn process_message(
         let mut messages = build_messages(&tape, config.system_prompt.as_deref());
 
         for iteration in 0..MAX_TOOL_ITERATIONS {
-            let request = crate::api_types::ChatRequest {
+            let request = crate::llm::api_types::ChatRequest {
                 model: config.model.clone(),
                 messages: messages.clone(),
                 max_tokens: None,
                 tools: tools.clone(),
             };
 
-            match crate::client::send_chat_request(config, &request).await {
+            match crate::llm::client::send_chat_request(config, &request).await {
                 Ok(chat_response) => {
                     // Check if model wants to call tools
                     if chat_response.has_tool_calls() {
@@ -261,13 +263,15 @@ pub async fn process_message(
                             );
 
                             // Append the assistant message with tool_calls to context
-                            messages.push(crate::api_types::Message::assistant_with_tool_calls(
-                                tool_calls.to_vec(),
-                            ));
+                            messages.push(
+                                crate::llm::api_types::Message::assistant_with_tool_calls(
+                                    tool_calls.to_vec(),
+                                ),
+                            );
 
                             // Execute each tool and append results
                             for tc in tool_calls {
-                                let result = crate::tools::execute_tool(
+                                let result = crate::tools::registry::execute_tool(
                                     &tc.function.name,
                                     &tc.function.arguments,
                                     &tape,
@@ -278,7 +282,8 @@ pub async fn process_message(
                                     result = %result,
                                     "telegram.tool_result"
                                 );
-                                messages.push(crate::api_types::Message::tool(&tc.id, &result));
+                                messages
+                                    .push(crate::llm::api_types::Message::tool(&tc.id, &result));
                             }
                             // Continue loop — re-call model with tool results
                             continue;

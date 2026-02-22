@@ -1,16 +1,9 @@
-pub mod api_types;
-pub mod channel;
-pub mod channel_manager;
-pub mod cli;
-pub mod client;
-pub mod command;
-pub mod config;
-pub mod context;
-pub mod error;
-pub mod input;
-pub mod repl;
-pub mod router;
-pub mod skills;
+pub mod channels;
+pub mod core;
+pub mod llm;
 pub mod tape;
-pub mod telegram;
 pub mod tools;
+
+// For backward compatibility during refactor, we can re-export the old names
+// or gradually update all call sites. Let's update all call sites instead of re-exporting
+// to keep the architecture clean.

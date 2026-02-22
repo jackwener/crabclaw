@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::error::{CrabClawError, Result};
+use crate::core::error::{CrabClawError, Result};
 
 const DEFAULT_API_BASE: &str = "https://api.example.com";
 const DEFAULT_MODEL: &str = "default";
@@ -218,8 +218,8 @@ fn strip_quotes(value: &str) -> &str {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::config::{CliConfigOverrides, resolve_config};
-    use crate::error::CrabClawError;
+    use crate::core::config::{CliConfigOverrides, resolve_config};
+    use crate::core::error::CrabClawError;
 
     #[test]
     fn resolves_config_with_deterministic_precedence() {

@@ -4,13 +4,13 @@ use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 use tracing::debug;
 
-use crate::api_types::ChatRequest;
-use crate::client::send_chat_request;
-use crate::config::AppConfig;
-use crate::context::build_messages;
-use crate::error::{CrabClawError, Result};
-use crate::router::route_user;
-use crate::tape::TapeStore;
+use crate::core::config::AppConfig;
+use crate::core::context::build_messages;
+use crate::core::error::{CrabClawError, Result};
+use crate::core::router::route_user;
+use crate::llm::api_types::ChatRequest;
+use crate::llm::client::send_chat_request;
+use crate::tape::store::TapeStore;
 
 /// Run an interactive REPL session.
 ///

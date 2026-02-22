@@ -5,8 +5,8 @@
 //! verify the full pipeline (tape → router → API call → response) without
 //! needing a real Telegram bot or LLM provider.
 
-use crabclaw::config::AppConfig;
-use crabclaw::telegram::process_message;
+use crabclaw::channels::telegram::process_message;
+use crabclaw::core::config::AppConfig;
 use tempfile::TempDir;
 
 fn test_config(api_base: &str) -> AppConfig {

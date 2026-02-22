@@ -2,10 +2,10 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::command::{CommandKind, ParsedArgs, detect_command};
-use crate::skills;
-use crate::tape::TapeStore;
-use crate::tools::{ToolRegistry, builtin_registry};
+use crate::core::command::{CommandKind, ParsedArgs, detect_command};
+use crate::tape::store::TapeStore;
+use crate::tools::registry::{ToolRegistry, builtin_registry};
+use crate::tools::skills;
 
 /// Routing outcome for user input.
 #[derive(Debug, Clone)]

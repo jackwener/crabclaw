@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use tracing::{debug, warn};
 
-use crate::api_types::{AnthropicRequest, ApiErrorBody, ChatRequest, ChatResponse};
-use crate::config::AppConfig;
-use crate::error::{CrabClawError, Result};
+use crate::core::config::AppConfig;
+use crate::core::error::{CrabClawError, Result};
+use crate::llm::api_types::{AnthropicRequest, ApiErrorBody, ChatRequest, ChatResponse};
 
 /// Non-standard error response (e.g. GLM returns HTTP 200 with error JSON).
 #[derive(Debug, serde::Deserialize)]
@@ -94,7 +94,7 @@ async fn send_anthropic_request(
     debug!(body = %body, "raw response body");
 
     if status.is_success() {
-        let anth_resp: crate::api_types::AnthropicResponse = serde_json::from_str(&body)?;
+        let anth_resp: crate::llm::api_types::AnthropicResponse = serde_json::from_str(&body)?;
         return Ok(anth_resp.into_chat_response());
     }
 
@@ -191,8 +191,8 @@ fn handle_error_response(status: reqwest::StatusCode, body_text: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api_types::{ChatRequest, Message};
-    use crate::config::AppConfig;
+    use crate::core::config::AppConfig;
+    use crate::llm::api_types::{ChatRequest, Message};
 
     fn test_config(api_base: &str) -> AppConfig {
         AppConfig {

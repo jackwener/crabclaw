@@ -1,5 +1,5 @@
-use crate::api_types::Message;
-use crate::tape::TapeStore;
+use crate::llm::api_types::Message;
+use crate::tape::store::TapeStore;
 
 /// Build a list of messages from tape entries for multi-turn conversation.
 ///

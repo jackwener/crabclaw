@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 
-use crate::error::{CrabClawError, Result};
+use crate::core::error::{CrabClawError, Result};
 
 pub fn resolve_prompt(prompt: Option<String>, prompt_file: Option<PathBuf>) -> Result<String> {
     if prompt.is_some() && prompt_file.is_some() {

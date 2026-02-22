@@ -4,12 +4,12 @@ use std::sync::Arc;
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 
-use crate::api_types::ChatRequest;
-use crate::client::send_chat_request;
-use crate::config::{CliConfigOverrides, load_runtime_config};
-use crate::context::build_messages;
-use crate::error::{CrabClawError, Result};
-use crate::input::resolve_prompt;
+use crate::core::config::{CliConfigOverrides, load_runtime_config};
+use crate::core::context::build_messages;
+use crate::core::error::{CrabClawError, Result};
+use crate::core::input::resolve_prompt;
+use crate::llm::api_types::ChatRequest;
+use crate::llm::client::send_chat_request;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -135,11 +135,12 @@ fn run_command(args: RunArgs) -> Result<()> {
 
     // Initialize tape store for session recording.
     let tape_dir = workspace.join(".crabclaw");
-    let mut tape = crate::tape::TapeStore::open(&tape_dir, "default").map_err(CrabClawError::Io)?;
+    let mut tape =
+        crate::tape::store::TapeStore::open(&tape_dir, "default").map_err(CrabClawError::Io)?;
     tape.ensure_bootstrap_anchor().map_err(CrabClawError::Io)?;
 
     // Route input through the command router.
-    let route = crate::router::route_user(&prompt, &mut tape, &workspace);
+    let route = crate::core::router::route_user(&prompt, &mut tape, &workspace);
 
     if route.exit_requested {
         return Ok(());
@@ -195,7 +196,7 @@ fn interactive_command(args: InteractiveArgs) -> Result<()> {
         system_prompt: args.system_prompt,
     };
     let config = load_runtime_config(&workspace, args.profile.as_deref(), &overrides)?;
-    crate::repl::run_interactive(&config, &workspace)
+    crate::channels::repl::run_interactive(&config, &workspace)
 }
 
 fn serve_command(args: ServeArgs) -> Result<()> {
@@ -216,7 +217,7 @@ fn serve_command(args: ServeArgs) -> Result<()> {
 
     rt.block_on(async {
         let mut manager =
-            crate::channel_manager::ChannelManager::new(Arc::clone(&config), &workspace);
+            crate::channels::manager::ChannelManager::new(Arc::clone(&config), &workspace);
         manager.run().await
     })
 }

@@ -5,7 +5,7 @@ fn main() {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    if let Err(err) = crabclaw::cli::run() {
+    if let Err(err) = crabclaw::channels::cli::run() {
         eprintln!("{err}");
         std::process::exit(1);
     }

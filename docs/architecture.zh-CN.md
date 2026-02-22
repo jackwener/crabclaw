@@ -6,9 +6,9 @@ CrabClaw 是一个基于 Rust 实现的基线项目，其代理 (Agentic) 设计
 
 CrabClaw 致力于在一个统一的环境中，完美地将 **“命令执行 (Command Execution)”** 与 **“模型推理 (Model Reasoning)”** 解耦。它的设计极度关注行为的可预测性与可审计性：
 
-- **确定性命令路由 (Deterministic Command Routing)**：所有以 `,` 开头的输入都被严格视为命令。
-  - 已知的内部命令（例如 `,help`, `,tools`）会绕过大模型，由应用程序直接拦截处理。
-  - 未来将支持把未知的 `,` 前缀字符串路由给原生的操作系统 Shell 执行。
+- **确定性命令路由 (Deterministic Command Routing)**：所有以 `,` 开头的输入都被视为命令。
+  - 已知的内部命令（例如 `,help`, `,tools`, `,handoff`）会绕过大模型，由应用程序直接拦截处理。
+  - 未知的 `,` 前缀字符串会被路由给原生的操作系统 Shell 执行。
   - 非 `,` 开头的输入会被作为纯自然语言，直接交给大语言模型 (LLM) 解析。
 - **单向数据流 (Single-Turn Data Flow)**：用户的输入和 AI 助手的输出都由同一套路由逻辑处理。一个统一的循环同时管控着用户指令和模型生成的函数调用 (Tool Calls)。
 - **只追加记忆层 (Append-Only Tape)**：对话历史记录被保存在一个只允许追加写入的、基于 JSONL 的 `TapeStore` 中。这避免了上下文丢失，使得对话能够确定性地重放，并提供了清晰的按时间线排列的审计追踪。
@@ -22,25 +22,26 @@ src/
 ├── core/               # 核心路由、配置与领域逻辑
 │   ├── config.rs       # 环境变量解析，多 Profile 配置覆盖
 │   ├── error.rs        # 全局错误枚举与领域异常处理
-│   ├── router.rs       # 核心路由于分发逻辑（区分命令与自然语言）
+│   ├── router.rs       # 核心路由与分发逻辑（区分命令与自然语言）
 │   ├── input.rs        # 输入标准化（处理 CLI 参数传入还是 Stdin）
-│   ├── command.rs      # 内部命令的注册与执行（如 `help`, `tape.info`）
-│   ├── context.rs      # 从 Tape 历史记录中重建模型的 Context Window
-│   └── shell.rs        # Shell 命令执行器（带超时和结构化失败上下文包装）
+│   ├── command.rs      # 命令检测（区分内部命令与 Shell 命令）
+│   ├── context.rs      # 从 Tape 构建 Context Window（基于 Anchor 截断）
+│   └── shell.rs        # Shell 命令执行器（带超时和失败上下文包装）
 ├── llm/                # 外部 AI 平台交互层
-│   ├── client.rs       # 通用的对话补全客户端（适配 Anthropic 和通用的 OpenAI 格式）
-│   └── api_types.rs    # 兼容 OpenAI 格式的数据结构 (`Message`, `ToolCall`, `ToolDefinition`)
+│   ├── client.rs       # 通用的对话补全客户端（适配 Anthropic 和 OpenAI 格式）
+│   └── api_types.rs    # 兼容 OpenAI 格式的数据结构 (Message, ToolCall, ToolDefinition)
 ├── tape/               # 会话记忆与持久化
-│   └── store.rs        # JSONL 文件读写器，管理时间戳与自增对数 ID
+│   └── store.rs        # JSONL Tape：追加、搜索、锚点、上下文截断
 ├── tools/              # LLM 函数调用与插件引擎
-│   ├── registry.rs     # 工具定义 (Schema) 生成器与执行多路复用器
-│   └── skills.rs       # 自动发现并解析工作区下 `.agent/skills` 目录内的 Markdown 插件
+│   ├── registry.rs     # 工具定义 Schema、执行多路复用器、技能桥接
+│   ├── skills.rs       # 自动发现并解析 .agent/skills 目录内的 Markdown 插件
+│   └── file_ops.rs     # 工作区沙箱化的 file.read, file.write, file.list
 ├── channels/           # 多渠道输入/输出适配器 (Channels)
-│   ├── base.rs         # 适用于各种不同接口渠道的通用 Trait
+│   ├── base.rs         # 适用于各种接口渠道的通用 Trait
 │   ├── manager.rs      # 用于管理所有后台 Channel 任务的调度器
 │   ├── cli.rs          # 一次性命令行接口 (One-shot CLI) 执行逻辑
-│   ├── repl.rs         # 交互式终端 (Interactive REPL) 包装器
-│   └── telegram.rs     # 长期轮询的 Telegram 机器人集成（含正在输入状态指示与媒体消息解析）
+│   ├── repl.rs         # 交互式终端（带工具调用循环）
+│   └── telegram.rs     # 长期轮询 Telegram 机器人（带工具调用循环）
 ```
 
 ## 3. 组件交互流程 (Component Interaction Flow)

@@ -6,9 +6,9 @@ CrabClaw is a Rust implementation baseline inspired by the [bub.build](https://b
 
 CrabClaw aims to perfectly decouple **Command Execution** from **Model Reasoning** within a unified environment. Its design prioritizes predictability and auditability:
 
-- **Deterministic Command Routing**: All inputs starting with `,` are treated strictly as commands.
-  - Known internal commands (e.g., `,help`, `,tools`) bypass the model and are handled immediately.
-  - Future support will route unknown comma-prefixed strings to native shell execution.
+- **Deterministic Command Routing**: All inputs starting with `,` are treated as commands.
+  - Known internal commands (e.g., `,help`, `,tools`, `,handoff`) bypass the model and are handled immediately.
+  - Unknown comma-prefixed strings are executed as native shell commands.
   - Non-comma inputs are interpreted as conversational NLP meant for the language model.
 - **Single-Turn Data Flow**: User input and Assistant output are processed by the same routing logic. A single unified loop governs both user instructions and model-generated tool calls.
 - **Append-Only Memory (Tape)**: Conversation history is recorded in an append-only, JSONL-backed `TapeStore`. This prevents contextual loss, allows deterministic replay, and provides a clear chronological audit trail.
@@ -24,23 +24,24 @@ src/
 │   ├── error.rs        # Global error enums and domain exceptions
 │   ├── router.rs       # Command vs NL routing logic
 │   ├── input.rs        # Input normalization (CLI flags vs Stdin)
-│   ├── command.rs      # Internal command registry and execution (`help`, `tape.info`)
-│   ├── context.rs      # Reconstructing context window from Tape history
-│   └── shell.rs        # Shell command executor with timeout and structured failure wrapping
+│   ├── command.rs      # Command detection (Internal vs Shell)
+│   ├── context.rs      # Context window from Tape (anchor-truncated)
+│   └── shell.rs        # Shell command executor with timeout and failure wrapping
 ├── llm/                # External AI Provider Boundaries
-│   ├── client.rs       # Generic chat completion client (Anthropic adapter, generic OpenAI format)
-│   └── api_types.rs    # OpenAI-compatible `Message`, `ToolCall`, `ToolDefinition`
+│   ├── client.rs       # Generic chat completion client (Anthropic adapter, OpenAI format)
+│   └── api_types.rs    # OpenAI-compatible Message, ToolCall, ToolDefinition
 ├── tape/               # Session Memory and Persistence
-│   └── store.rs        # JSONL file reader/writer, timestamping, log IDs
+│   └── store.rs        # JSONL tape: append, search, anchors, context truncation
 ├── tools/              # LLM Function Calling and Plugin Engine
-│   ├── registry.rs     # Tool definition schema generator and execute multiplexer
-│   └── skills.rs       # Discovery and parsing of workspace `.agent/skills` (.md plugins)
+│   ├── registry.rs     # Tool definition schemas, execute multiplexer, skill bridging
+│   ├── skills.rs       # Discovery and parsing of .agent/skills (.md plugins)
+│   └── file_ops.rs     # Workspace-sandboxed file.read, file.write, file.list
 ├── channels/           # Input/Output Adapters (Multi-channel multiplexing)
-│   ├── base.rs         # Common trait for different interface channels
+│   ├── base.rs         # Common trait for interface channels
 │   ├── manager.rs      # Supervisor handling background channel tasks
 │   ├── cli.rs          # One-shot command-line interface execution
-│   ├── repl.rs         # Interactive terminal session wrapper
-│   └── telegram.rs     # Long-polling Telegram bot integration (typing indicators, media parsing)
+│   ├── repl.rs         # Interactive terminal with tool calling loop
+│   └── telegram.rs     # Long-polling Telegram bot with tool calling loop
 ```
 
 ## 3. Component Interaction Flow

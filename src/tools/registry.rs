@@ -152,7 +152,7 @@ pub fn to_tool_definitions(registry: &ToolRegistry) -> Vec<crate::llm::api_types
 }
 
 /// Return the JSON schema for a tool's parameters.
-fn tool_parameters(name: &str) -> serde_json::Value {
+pub fn tool_parameters(name: &str) -> serde_json::Value {
     match name {
         "shell.exec" => serde_json::json!({
             "type": "object",

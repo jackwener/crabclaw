@@ -266,6 +266,36 @@ fn execute_internal(
             }
         }
         "tools" => execute_tools(registry),
+        "tool.describe" => {
+            let name = if args.positional.is_empty() {
+                return CommandResult {
+                    success: false,
+                    output: "Usage: ,tool.describe <tool_name>".to_string(),
+                    exit_requested: false,
+                };
+            } else {
+                args.positional[0].clone()
+            };
+            match registry.get(&name) {
+                Some(tool) => {
+                    let params = crate::tools::registry::tool_parameters(&name);
+                    let params_str = serde_json::to_string_pretty(&params).unwrap_or_default();
+                    CommandResult {
+                        success: true,
+                        output: format!(
+                            "Tool: {}\nDescription: {}\nSource: {}\nParameters:\n{}",
+                            tool.name, tool.description, tool.source, params_str
+                        ),
+                        exit_requested: false,
+                    }
+                }
+                None => CommandResult {
+                    success: false,
+                    output: format!("Tool not found: {name}"),
+                    exit_requested: false,
+                },
+            }
+        }
         "skills" => execute_skills(workspace),
         "skills.describe" => execute_skills_describe(args, workspace),
         _ => CommandResult {
@@ -288,6 +318,7 @@ Available commands:
   ,anchors            — List all anchors in the tape
   ,handoff [name]     — Create a handoff anchor (resets context window)
   ,tools              — List all registered tools
+  ,tool.describe <n>  — Show tool details and parameter schema
   ,skills             — List discovered skills
   ,skills.describe <n>— Show full body of a skill
   ,<shell command>    — Execute a shell command (e.g. ,ls, ,git status)";
@@ -652,5 +683,24 @@ mod tests {
         let anchors = tape.anchor_entries();
         let last = anchors.last().unwrap();
         assert_eq!(last.payload["name"], "checkpoint-1");
+    }
+
+    #[test]
+    fn tool_describe_shows_params() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_user(",tool.describe shell.exec", &mut tape, ws.path());
+        assert!(!result.enter_model);
+        assert!(result.immediate_output.contains("shell.exec"));
+        assert!(result.immediate_output.contains("command"));
+    }
+
+    #[test]
+    fn tool_describe_unknown_tool() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_user(",tool.describe nonexistent", &mut tape, ws.path());
+        // Unknown tool fails and falls to model
+        assert!(result.enter_model);
     }
 }

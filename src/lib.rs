@@ -8,4 +8,6 @@ pub mod error;
 pub mod input;
 pub mod repl;
 pub mod router;
+pub mod skills;
 pub mod tape;
+pub mod tools;

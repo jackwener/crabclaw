@@ -1,7 +1,11 @@
+use std::path::Path;
+
 use serde::Serialize;
 
-use crate::command::{CommandKind, detect_command};
+use crate::command::{CommandKind, ParsedArgs, detect_command};
+use crate::skills;
 use crate::tape::TapeStore;
+use crate::tools::{ToolRegistry, builtin_registry};
 
 /// Routing outcome for user input.
 #[derive(Debug, Clone)]
@@ -16,14 +20,6 @@ pub struct UserRouteResult {
     pub exit_requested: bool,
 }
 
-/// Known internal commands for the MVP.
-const BUILTIN_COMMANDS: &[(&str, &str)] = &[
-    ("help", "Show available commands"),
-    ("quit", "Exit the application"),
-    ("tape.info", "Show tape session info"),
-    ("tape.reset", "Reset the tape (use --archive to save)"),
-];
-
 /// Route user input to the appropriate handler.
 ///
 /// Logic (aligned with bub's `InputRouter.route_user`):
@@ -32,7 +28,7 @@ const BUILTIN_COMMANDS: &[(&str, &str)] = &[
 /// 3. Successful command → return output directly
 /// 4. Unknown command → fallback to model with context
 /// 5. Natural language → send to model
-pub fn route_user(input: &str, tape: &mut TapeStore) -> UserRouteResult {
+pub fn route_user(input: &str, tape: &mut TapeStore, workspace: &Path) -> UserRouteResult {
     let stripped = input.trim();
 
     if stripped.is_empty() {
@@ -62,7 +58,8 @@ pub fn route_user(input: &str, tape: &mut TapeStore) -> UserRouteResult {
     // Execute internal command
     match command.kind {
         CommandKind::Internal => {
-            let result = execute_internal(&command.name, tape, &command.args);
+            let registry = builtin_registry();
+            let result = execute_internal(&command.name, tape, &command.args, workspace, &registry);
 
             tape.append_event(
                 "command",
@@ -119,7 +116,9 @@ struct CommandResult {
 fn execute_internal(
     name: &str,
     tape: &mut TapeStore,
-    args: &crate::command::ParsedArgs,
+    args: &ParsedArgs,
+    workspace: &Path,
+    registry: &ToolRegistry,
 ) -> CommandResult {
     match name {
         "help" => execute_help(),
@@ -130,6 +129,9 @@ fn execute_internal(
         },
         "tape.info" | "tape" => execute_tape_info(tape),
         "tape.reset" => execute_tape_reset(tape, args.has_flag("archive")),
+        "tools" => execute_tools(registry),
+        "skills" => execute_skills(workspace),
+        "skills.describe" => execute_skills_describe(args, workspace),
         _ => CommandResult {
             success: false,
             output: format!("unknown internal command: {name}"),
@@ -139,9 +141,11 @@ fn execute_internal(
 }
 
 fn execute_help() -> CommandResult {
+    let registry = builtin_registry();
+    let rows = registry.compact_rows();
     let mut lines = vec!["Available commands:".to_string()];
-    for (name, desc) in BUILTIN_COMMANDS {
-        lines.push(format!("  ,{name:<16} {desc}"));
+    for row in rows {
+        lines.push(format!("  ,{row}"));
     }
     CommandResult {
         success: true,
@@ -199,6 +203,75 @@ fn execute_tape_reset(tape: &mut TapeStore, archive: bool) -> CommandResult {
     }
 }
 
+fn execute_tools(registry: &ToolRegistry) -> CommandResult {
+    let rows = registry.compact_rows();
+    if rows.is_empty() {
+        return CommandResult {
+            success: true,
+            output: "No tools registered.".to_string(),
+            exit_requested: false,
+        };
+    }
+    let mut lines = vec![format!("Registered tools ({}):", rows.len())];
+    for row in rows {
+        lines.push(format!("  {row}"));
+    }
+    CommandResult {
+        success: true,
+        output: lines.join("\n"),
+        exit_requested: false,
+    }
+}
+
+fn execute_skills(workspace: &Path) -> CommandResult {
+    let discovered = skills::discover_skills(workspace);
+    if discovered.is_empty() {
+        return CommandResult {
+            success: true,
+            output: "No skills discovered.".to_string(),
+            exit_requested: false,
+        };
+    }
+    let mut lines = vec![format!("Discovered skills ({}):", discovered.len())];
+    for skill in &discovered {
+        lines.push(format!(
+            "  {}: {} [{}]",
+            skill.name, skill.description, skill.source
+        ));
+    }
+    CommandResult {
+        success: true,
+        output: lines.join("\n"),
+        exit_requested: false,
+    }
+}
+
+fn execute_skills_describe(args: &ParsedArgs, workspace: &Path) -> CommandResult {
+    let name = match args.positional.first() {
+        Some(n) => n,
+        None => {
+            return CommandResult {
+                success: false,
+                output: "usage: ,skills.describe <name>".to_string(),
+                exit_requested: false,
+            };
+        }
+    };
+
+    match skills::load_skill_body(name, workspace) {
+        Some(body) => CommandResult {
+            success: true,
+            output: body,
+            exit_requested: false,
+        },
+        None => CommandResult {
+            success: false,
+            output: format!("skill not found: {name}"),
+            exit_requested: false,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,10 +283,15 @@ mod tests {
         (dir, tape)
     }
 
+    fn workspace() -> tempfile::TempDir {
+        tempdir().unwrap()
+    }
+
     #[test]
     fn empty_input_does_nothing() {
         let (_dir, mut tape) = make_tape();
-        let result = route_user("", &mut tape);
+        let ws = workspace();
+        let result = route_user("", &mut tape, ws.path());
         assert!(!result.enter_model);
         assert!(!result.exit_requested);
         assert!(result.immediate_output.is_empty());
@@ -222,7 +300,8 @@ mod tests {
     #[test]
     fn natural_language_routes_to_model() {
         let (_dir, mut tape) = make_tape();
-        let result = route_user("What is Rust?", &mut tape);
+        let ws = workspace();
+        let result = route_user("What is Rust?", &mut tape, ws.path());
         assert!(result.enter_model);
         assert_eq!(result.model_prompt, "What is Rust?");
         assert!(!result.exit_requested);
@@ -231,17 +310,19 @@ mod tests {
     #[test]
     fn help_command_returns_immediately() {
         let (_dir, mut tape) = make_tape();
-        let result = route_user(",help", &mut tape);
+        let ws = workspace();
+        let result = route_user(",help", &mut tape, ws.path());
         assert!(!result.enter_model);
         assert!(result.immediate_output.contains("Available commands"));
-        assert!(result.immediate_output.contains(",help"));
+        assert!(result.immediate_output.contains("help"));
         assert!(!result.exit_requested);
     }
 
     #[test]
     fn quit_command_sets_exit() {
         let (_dir, mut tape) = make_tape();
-        let result = route_user(",quit", &mut tape);
+        let ws = workspace();
+        let result = route_user(",quit", &mut tape, ws.path());
         assert!(!result.enter_model);
         assert!(result.exit_requested);
     }
@@ -249,8 +330,9 @@ mod tests {
     #[test]
     fn tape_info_returns_stats() {
         let (_dir, mut tape) = make_tape();
+        let ws = workspace();
         tape.ensure_bootstrap_anchor().unwrap();
-        let result = route_user(",tape.info", &mut tape);
+        let result = route_user(",tape.info", &mut tape, ws.path());
         assert!(!result.enter_model);
         assert!(result.immediate_output.contains("router-test"));
     }
@@ -258,8 +340,9 @@ mod tests {
     #[test]
     fn tape_reset_resets_and_reports() {
         let (_dir, mut tape) = make_tape();
+        let ws = workspace();
         tape.append_message("user", "hello").unwrap();
-        let result = route_user(",tape.reset", &mut tape);
+        let result = route_user(",tape.reset", &mut tape, ws.path());
         assert!(!result.enter_model);
         assert!(result.immediate_output.contains("Tape reset"));
         // After reset, bootstrap anchor + the command event recording the reset itself
@@ -271,7 +354,8 @@ mod tests {
     #[test]
     fn unknown_command_falls_back_to_model() {
         let (_dir, mut tape) = make_tape();
-        let result = route_user(",nonexistent", &mut tape);
+        let ws = workspace();
+        let result = route_user(",nonexistent", &mut tape, ws.path());
         assert!(result.enter_model);
         assert!(result.model_prompt.contains("unknown internal command"));
         assert!(!result.exit_requested);
@@ -280,9 +364,48 @@ mod tests {
     #[test]
     fn tape_alias_works() {
         let (_dir, mut tape) = make_tape();
+        let ws = workspace();
         tape.ensure_bootstrap_anchor().unwrap();
-        let result = route_user(",tape", &mut tape);
+        let result = route_user(",tape", &mut tape, ws.path());
         assert!(!result.enter_model);
         assert!(result.immediate_output.contains("router-test"));
+    }
+
+    #[test]
+    fn tools_command_lists_builtins() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_user(",tools", &mut tape, ws.path());
+        assert!(!result.enter_model);
+        assert!(result.immediate_output.contains("Registered tools"));
+        assert!(result.immediate_output.contains("tape.info"));
+    }
+
+    #[test]
+    fn skills_command_empty_workspace() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_user(",skills", &mut tape, ws.path());
+        assert!(!result.enter_model);
+        assert!(result.immediate_output.contains("No skills discovered"));
+    }
+
+    #[test]
+    fn skills_describe_missing_name() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_user(",skills.describe", &mut tape, ws.path());
+        // Failed command (no name provided) falls back to model
+        assert!(result.enter_model);
+        assert!(result.model_prompt.contains("usage"));
+    }
+    #[test]
+    fn skills_describe_not_found() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_user(",skills.describe nonexistent", &mut tape, ws.path());
+        // Falls back to model on error
+        assert!(result.enter_model);
+        assert!(result.model_prompt.contains("skill not found"));
     }
 }

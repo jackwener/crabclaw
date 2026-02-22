@@ -59,7 +59,7 @@ pub fn run_interactive(config: &AppConfig, workspace: &Path) -> Result<()> {
 
                 let _ = editor.add_history_entry(trimmed);
 
-                let route = route_user(trimmed, &mut tape);
+                let route = route_user(trimmed, &mut tape, workspace);
 
                 if route.exit_requested {
                     break;

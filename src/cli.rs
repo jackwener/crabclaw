@@ -121,7 +121,7 @@ fn run_command(args: RunArgs) -> Result<()> {
     tape.ensure_bootstrap_anchor().map_err(CrabClawError::Io)?;
 
     // Route input through the command router.
-    let route = crate::router::route_user(&prompt, &mut tape);
+    let route = crate::router::route_user(&prompt, &mut tape, &workspace);
 
     if route.exit_requested {
         return Ok(());

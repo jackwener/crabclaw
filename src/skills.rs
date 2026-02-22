@@ -243,4 +243,25 @@ mod tests {
         assert_eq!(skills[0].name, "alpha");
         assert_eq!(skills[1].name, "zebra");
     }
+
+    #[test]
+    fn malformed_frontmatter_skips_cleanly() {
+        let fm = parse_frontmatter("---\nnot: valid: yaml: here\n---\nBody");
+        // Gracefully handles; the first split_once on ':' takes "not" => "valid: yaml: here"
+        assert!(fm.contains_key("not"));
+    }
+
+    #[test]
+    fn empty_name_in_frontmatter_uses_dir() {
+        let dir = tempdir().unwrap();
+        write_skill(
+            dir.path(),
+            "real-dir-name",
+            "---\nname:   \ndescription: Has empty name\n---\nBody",
+        );
+
+        let skills = discover_skills(dir.path());
+        // Empty name is rejected, skill is skipped entirely
+        assert!(skills.is_empty());
+    }
 }

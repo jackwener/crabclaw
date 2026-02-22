@@ -303,4 +303,61 @@ mod tests {
         tape.ensure_bootstrap_anchor().unwrap();
         assert_eq!(tape.entries().len(), 1);
     }
+
+    #[test]
+    fn corrupted_line_skipped() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("corrupt.jsonl");
+        // Write a valid entry, a corrupt line, and another valid entry
+        let valid1 = serde_json::to_string(&TapeEntry {
+            id: 1,
+            kind: "message".to_string(),
+            payload: serde_json::json!({"role": "user", "content": "hi"}),
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+        })
+        .unwrap();
+        let valid2 = serde_json::to_string(&TapeEntry {
+            id: 2,
+            kind: "message".to_string(),
+            payload: serde_json::json!({"role": "assistant", "content": "hello"}),
+            timestamp: "2026-01-01T00:00:01Z".to_string(),
+        })
+        .unwrap();
+        std::fs::write(&path, format!("{valid1}\nNOT_VALID_JSON\n{valid2}\n")).unwrap();
+
+        let tape = TapeStore::open(dir.path(), "corrupt").unwrap();
+        // Should have 2 entries, the corrupt line is skipped
+        assert_eq!(tape.entries().len(), 2);
+        assert_eq!(tape.entries()[0].id, 1);
+        assert_eq!(tape.entries()[1].id, 2);
+    }
+
+    #[test]
+    fn timestamp_is_rfc3339() {
+        let dir = tempdir().unwrap();
+        let mut tape = TapeStore::open(dir.path(), "ts").unwrap();
+        tape.append_message("user", "hello").unwrap();
+
+        let ts = &tape.entries()[0].timestamp;
+        // Parse as RFC3339 — should succeed
+        chrono::DateTime::parse_from_rfc3339(ts)
+            .unwrap_or_else(|e| panic!("timestamp '{ts}' is not valid RFC3339: {e}"));
+    }
+
+    #[test]
+    fn reopen_preserves_next_id() {
+        let dir = tempdir().unwrap();
+
+        {
+            let mut tape = TapeStore::open(dir.path(), "idtest").unwrap();
+            tape.append_message("user", "one").unwrap();
+            tape.append_message("user", "two").unwrap();
+            assert_eq!(tape.entries().last().unwrap().id, 2);
+        }
+
+        // Reopen and append — should continue from id=3
+        let mut tape = TapeStore::open(dir.path(), "idtest").unwrap();
+        tape.append_message("user", "three").unwrap();
+        assert_eq!(tape.entries().last().unwrap().id, 3);
+    }
 }

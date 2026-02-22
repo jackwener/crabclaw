@@ -164,4 +164,36 @@ mod tests {
         assert!(resp.usage.is_none());
         assert!(resp.choices[0].finish_reason.is_none());
     }
+
+    #[test]
+    fn assistant_content_empty_choices() {
+        let raw = r#"{
+            "id": "chatcmpl-empty",
+            "choices": []
+        }"#;
+        let resp: ChatResponse = serde_json::from_str(raw).expect("deserialize");
+        assert!(resp.assistant_content().is_none());
+    }
+
+    #[test]
+    fn message_constructors() {
+        let u = Message::user("hi");
+        assert_eq!(u.role, "user");
+        assert_eq!(u.content, "hi");
+
+        let s = Message::system("be concise");
+        assert_eq!(s.role, "system");
+        assert_eq!(s.content, "be concise");
+    }
+
+    #[test]
+    fn api_error_body_deserialization() {
+        let raw =
+            r#"{"error": {"message": "Rate limit", "type": "rate_limit_error", "code": "429"}}"#;
+        let body: ApiErrorBody = serde_json::from_str(raw).expect("deserialize");
+        let detail = body.error.expect("error present");
+        assert_eq!(detail.message, "Rate limit");
+        assert_eq!(detail.error_type.as_deref(), Some("rate_limit_error"));
+        assert_eq!(detail.code.as_deref(), Some("429"));
+    }
 }

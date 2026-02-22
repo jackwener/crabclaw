@@ -59,8 +59,10 @@ fn run_accepts_prompt_from_stdin() {
 
 #[test]
 fn run_fails_when_api_key_is_missing() {
+    let tmp = tempdir().expect("tempdir");
     let mut cmd = base_command();
-    cmd.args(["run", "--prompt", "hello", "--dry-run"])
+    cmd.current_dir(tmp.path())
+        .args(["run", "--prompt", "hello", "--dry-run"])
         .assert()
         .failure()
         .stderr(predicate::str::contains(
@@ -101,4 +103,63 @@ fn run_honors_profile_and_precedence() {
             "\"api_base\": \"https://env-profile.example.com\"",
         ))
         .stdout(predicate::str::contains("\"model\": \"cli-model\""));
+}
+
+#[test]
+fn run_comma_command_via_prompt() {
+    let mut cmd = base_command();
+    cmd.env("OPENCLAW_API_KEY", "test-key")
+        .args(["run", "--prompt", ",help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Available commands"));
+}
+
+#[test]
+fn run_rejects_both_prompt_sources() {
+    let tmp = tempdir().expect("tempdir");
+    let prompt_path = tmp.path().join("prompt.txt");
+    fs::write(&prompt_path, "hello").expect("write");
+
+    let mut cmd = base_command();
+    cmd.env("OPENCLAW_API_KEY", "test-key")
+        .args([
+            "run",
+            "--prompt",
+            "hello",
+            "--prompt-file",
+            prompt_path.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not both"));
+}
+
+#[test]
+fn run_rejects_empty_prompt() {
+    let mut cmd = base_command();
+    cmd.env("OPENCLAW_API_KEY", "test-key")
+        .args(["run", "--prompt", "   "])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("empty"));
+}
+
+#[test]
+fn interactive_help_text() {
+    let mut cmd = base_command();
+    cmd.args(["interactive", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("interactive"));
+}
+
+#[test]
+fn run_help_text() {
+    let mut cmd = base_command();
+    cmd.args(["run", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--prompt"))
+        .stdout(predicate::str::contains("--system-prompt"));
 }

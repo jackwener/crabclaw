@@ -224,4 +224,90 @@ mod tests {
             other => panic!("unexpected error: {other}"),
         }
     }
+
+    #[test]
+    fn default_profile_used_when_none() {
+        let mut env_vars = HashMap::new();
+        env_vars.insert("OPENCLAW_API_KEY".to_string(), "key".to_string());
+        let overrides = CliConfigOverrides::default();
+
+        let config = resolve_config(None, &overrides, &env_vars, &HashMap::new()).unwrap();
+        assert_eq!(config.profile, "default");
+    }
+
+    #[test]
+    fn defaults_for_api_base_and_model() {
+        let mut env_vars = HashMap::new();
+        env_vars.insert("OPENCLAW_API_KEY".to_string(), "key".to_string());
+        let overrides = CliConfigOverrides::default();
+
+        let config = resolve_config(None, &overrides, &env_vars, &HashMap::new()).unwrap();
+        assert_eq!(config.api_base, "https://api.example.com");
+        assert_eq!(config.model, "openclaw/default");
+    }
+
+    #[test]
+    fn system_prompt_resolved_from_env() {
+        let mut env_vars = HashMap::new();
+        env_vars.insert("OPENCLAW_API_KEY".to_string(), "key".to_string());
+        env_vars.insert(
+            "CRABCLAW_SYSTEM_PROMPT".to_string(),
+            "Be concise".to_string(),
+        );
+        let overrides = CliConfigOverrides::default();
+
+        let config = resolve_config(None, &overrides, &env_vars, &HashMap::new()).unwrap();
+        assert_eq!(config.system_prompt.as_deref(), Some("Be concise"));
+    }
+
+    #[test]
+    fn system_prompt_cli_overrides_env() {
+        let mut env_vars = HashMap::new();
+        env_vars.insert("OPENCLAW_API_KEY".to_string(), "key".to_string());
+        env_vars.insert("CRABCLAW_SYSTEM_PROMPT".to_string(), "from env".to_string());
+        let overrides = CliConfigOverrides {
+            system_prompt: Some("from cli".to_string()),
+            ..Default::default()
+        };
+
+        let config = resolve_config(None, &overrides, &env_vars, &HashMap::new()).unwrap();
+        assert_eq!(config.system_prompt.as_deref(), Some("from cli"));
+    }
+
+    #[test]
+    fn system_prompt_none_when_unset() {
+        let mut env_vars = HashMap::new();
+        env_vars.insert("OPENCLAW_API_KEY".to_string(), "key".to_string());
+        let overrides = CliConfigOverrides::default();
+
+        let config = resolve_config(None, &overrides, &env_vars, &HashMap::new()).unwrap();
+        assert!(config.system_prompt.is_none());
+    }
+
+    #[test]
+    fn parse_dotenv_basic_kv() {
+        use super::parse_dotenv;
+        let content = "KEY1=value1\nKEY2=value2\n";
+        let map = parse_dotenv(content);
+        assert_eq!(map.get("KEY1").unwrap(), "value1");
+        assert_eq!(map.get("KEY2").unwrap(), "value2");
+    }
+
+    #[test]
+    fn parse_dotenv_with_comments_and_export() {
+        use super::parse_dotenv;
+        let content = "# comment line\nexport MY_KEY=my_value\nEMPTY=\n";
+        let map = parse_dotenv(content);
+        assert_eq!(map.get("MY_KEY").unwrap(), "my_value");
+        assert!(map.contains_key("EMPTY"));
+    }
+
+    #[test]
+    fn strip_quotes_removes_double_and_single() {
+        use super::strip_quotes;
+        assert_eq!(strip_quotes("\"hello\""), "hello");
+        assert_eq!(strip_quotes("'world'"), "world");
+        assert_eq!(strip_quotes("noquotes"), "noquotes");
+        assert_eq!(strip_quotes("\""), "\""); // too short
+    }
 }

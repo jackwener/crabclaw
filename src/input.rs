@@ -42,3 +42,64 @@ pub fn resolve_prompt(prompt: Option<String>, prompt_file: Option<PathBuf>) -> R
     }
     Ok(buffer)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn prompt_direct_string() {
+        let result = resolve_prompt(Some("hello".to_string()), None);
+        assert_eq!(result.unwrap(), "hello");
+    }
+
+    #[test]
+    fn prompt_empty_string_errors() {
+        let err = resolve_prompt(Some("  ".to_string()), None).unwrap_err();
+        match err {
+            CrabClawError::Config(msg) => assert!(msg.contains("empty")),
+            other => panic!("expected Config error, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn prompt_both_flags_errors() {
+        let err =
+            resolve_prompt(Some("hello".to_string()), Some(PathBuf::from("file.txt"))).unwrap_err();
+        match err {
+            CrabClawError::Config(msg) => assert!(msg.contains("not both")),
+            other => panic!("expected Config error, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn prompt_from_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("prompt.txt");
+        std::fs::write(&path, "file content").unwrap();
+        let result = resolve_prompt(None, Some(path));
+        assert_eq!(result.unwrap(), "file content");
+    }
+
+    #[test]
+    fn prompt_empty_file_errors() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("empty.txt");
+        std::fs::write(&path, "   ").unwrap();
+        let err = resolve_prompt(None, Some(path)).unwrap_err();
+        match err {
+            CrabClawError::Config(msg) => assert!(msg.contains("empty")),
+            other => panic!("expected Config error, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn prompt_missing_file_errors() {
+        let err = resolve_prompt(None, Some(PathBuf::from("/nonexistent/file.txt"))).unwrap_err();
+        match err {
+            CrabClawError::Io(_) => {} // expected
+            other => panic!("expected Io error, got: {other}"),
+        }
+    }
+}

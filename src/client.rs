@@ -213,4 +213,105 @@ mod tests {
         assert_eq!(resp.choices[0].finish_reason.as_deref(), Some("stop"));
         mock.assert_async().await;
     }
+
+    #[tokio::test]
+    async fn http_403_returns_auth_error() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(403)
+            .with_body(r#"{"error": {"message": "Forbidden"}}"#)
+            .create_async()
+            .await;
+
+        let config = test_config(&server.url());
+        let request = ChatRequest {
+            model: "test".to_string(),
+            messages: vec![Message::user("hello")],
+            max_tokens: None,
+        };
+
+        let err = send_chat_request(&config, &request).await.unwrap_err();
+        match err {
+            CrabClawError::Auth(msg) => assert!(msg.contains("403"), "msg: {msg}"),
+            other => panic!("expected Auth error, got: {other}"),
+        }
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn http_418_returns_api_error() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(418)
+            .with_body("I'm a teapot")
+            .create_async()
+            .await;
+
+        let config = test_config(&server.url());
+        let request = ChatRequest {
+            model: "test".to_string(),
+            messages: vec![Message::user("hello")],
+            max_tokens: None,
+        };
+
+        let err = send_chat_request(&config, &request).await.unwrap_err();
+        match err {
+            CrabClawError::Api(msg) => assert!(msg.contains("418"), "msg: {msg}"),
+            other => panic!("expected Api error, got: {other}"),
+        }
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn malformed_json_body_returns_error() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("not valid json")
+            .create_async()
+            .await;
+
+        let config = test_config(&server.url());
+        let request = ChatRequest {
+            model: "test".to_string(),
+            messages: vec![Message::user("hello")],
+            max_tokens: None,
+        };
+
+        let err = send_chat_request(&config, &request).await.unwrap_err();
+        match err {
+            CrabClawError::Serialization(_) => {} // expected
+            other => panic!("expected Serialization error, got: {other}"),
+        }
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn empty_error_body_handled() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(500)
+            .with_body("")
+            .create_async()
+            .await;
+
+        let config = test_config(&server.url());
+        let request = ChatRequest {
+            model: "test".to_string(),
+            messages: vec![Message::user("hello")],
+            max_tokens: None,
+        };
+
+        let err = send_chat_request(&config, &request).await.unwrap_err();
+        match err {
+            CrabClawError::Api(msg) => assert!(msg.contains("500"), "msg: {msg}"),
+            other => panic!("expected Api error, got: {other}"),
+        }
+        mock.assert_async().await;
+    }
 }

@@ -115,6 +115,11 @@ pub fn builtin_registry() -> ToolRegistry {
         "List the contents of a directory in the workspace. Use empty path for workspace root.",
         "builtin",
     );
+    registry.register(
+        "file.search",
+        "Search for text within files in the workspace (recursive grep). Case-insensitive.",
+        "builtin",
+    );
     registry
 }
 
@@ -197,6 +202,20 @@ pub fn tool_parameters(name: &str) -> serde_json::Value {
                 }
             },
             "required": []
+        }),
+        "file.search" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Text to search for (case-insensitive)"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Optional directory to search in, relative to workspace root. Empty for entire workspace."
+                }
+            },
+            "required": ["query"]
         }),
         _ => serde_json::json!({
             "type": "object",
@@ -307,6 +326,15 @@ pub fn execute_tool(
             use crate::tools::file_ops;
             let path = parse_json_arg(args, "path").unwrap_or_default();
             file_ops::list_directory(workspace, &path)
+        }
+        "file.search" => {
+            use crate::tools::file_ops;
+            let query = parse_json_arg(args, "query").unwrap_or_default();
+            if query.is_empty() {
+                return "Error: 'query' argument is required.".to_string();
+            }
+            let path = parse_json_arg(args, "path").unwrap_or_default();
+            file_ops::search_files(workspace, &query, &path)
         }
         _ if name.starts_with("skill.") => {
             // Skill tool: load the skill body and return as context.

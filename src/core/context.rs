@@ -11,6 +11,7 @@ You have access to the following tools:
 - file.read: Read file contents (workspace-sandboxed)
 - file.write: Write or create files (workspace-sandboxed)
 - file.list: List directory contents
+- file.search: Search for text within files (recursive grep)
 
 You can also access any discovered skills from the workspace.
 

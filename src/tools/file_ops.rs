@@ -158,6 +158,153 @@ pub fn list_directory(workspace: &Path, dir_path: &str) -> String {
     }
 }
 
+/// Search for text within files in the workspace (recursive grep).
+///
+/// Returns matching lines with file path, line number, and content.
+/// Results are capped at 50 matches to prevent context overflow.
+pub fn search_files(workspace: &Path, query: &str, path: &str) -> String {
+    if query.trim().is_empty() {
+        return "Error: query cannot be empty.".to_string();
+    }
+
+    let search_root = if path.trim().is_empty() {
+        workspace.to_path_buf()
+    } else {
+        match resolve_safe_path(workspace, path) {
+            Some(p) => p,
+            None => return format!("Access denied: path escapes workspace: {path}"),
+        }
+    };
+
+    if !search_root.exists() {
+        return format!("Path not found: {path}");
+    }
+
+    let query_lower = query.to_lowercase();
+    let mut results = Vec::new();
+    const MAX_RESULTS: usize = 50;
+
+    search_recursive(
+        workspace,
+        &search_root,
+        &query_lower,
+        &mut results,
+        MAX_RESULTS,
+    );
+
+    if results.is_empty() {
+        format!("No matches found for: {query}")
+    } else {
+        let count = results.len();
+        let suffix = if count >= MAX_RESULTS {
+            format!("\n\n[... capped at {MAX_RESULTS} results]")
+        } else {
+            String::new()
+        };
+        format!(
+            "{count} match(es) for \"{query}\":\n{}{suffix}",
+            results.join("\n")
+        )
+    }
+}
+
+/// Directories to skip during search.
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    ".crabclaw",
+    "target",
+    "node_modules",
+    ".agent",
+    "__pycache__",
+    ".venv",
+    "dist",
+    "build",
+];
+
+fn search_recursive(
+    workspace: &Path,
+    dir: &Path,
+    query: &str,
+    results: &mut Vec<String>,
+    max: usize,
+) {
+    if results.len() >= max {
+        return;
+    }
+
+    // If it's a file, search it directly
+    if dir.is_file() {
+        search_file(workspace, dir, query, results, max);
+        return;
+    }
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        if results.len() >= max {
+            return;
+        }
+
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        // Skip hidden and known build directories
+        if name.starts_with('.') && path.is_dir() {
+            continue;
+        }
+        if path.is_dir() && SKIP_DIRS.contains(&name.as_str()) {
+            continue;
+        }
+
+        if path.is_dir() {
+            search_recursive(workspace, &path, query, results, max);
+        } else if path.is_file() {
+            search_file(workspace, &path, query, results, max);
+        }
+    }
+}
+
+fn search_file(workspace: &Path, file: &Path, query: &str, results: &mut Vec<String>, max: usize) {
+    // Skip likely binary files by extension
+    let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
+    const BINARY_EXTS: &[&str] = &[
+        "png", "jpg", "jpeg", "gif", "ico", "woff", "woff2", "ttf", "eot", "zip", "tar", "gz",
+        "bz2", "xz", "pdf", "exe", "dll", "so", "dylib", "o", "a", "class", "jar", "pyc", "wasm",
+    ];
+    if BINARY_EXTS.contains(&ext) {
+        return;
+    }
+
+    let content = match std::fs::read_to_string(file) {
+        Ok(c) => c,
+        Err(_) => return, // Skip binary/unreadable files
+    };
+
+    let rel_path = file
+        .strip_prefix(workspace)
+        .unwrap_or(file)
+        .display()
+        .to_string();
+
+    for (line_num, line) in content.lines().enumerate() {
+        if results.len() >= max {
+            return;
+        }
+        if line.to_lowercase().contains(query) {
+            let trimmed = line.trim();
+            let display = if trimmed.len() > 120 {
+                format!("{}...", &trimmed[..117])
+            } else {
+                trimmed.to_string()
+            };
+            results.push(format!("  {rel_path}:{}: {display}", line_num + 1));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,5 +433,55 @@ mod tests {
         let dir = tempdir().unwrap();
         let result = resolve_safe_path(dir.path(), "");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn search_finds_matches() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("foo.rs"), "fn hello_world() {}").unwrap();
+        std::fs::write(dir.path().join("bar.rs"), "fn goodbye() {}").unwrap();
+
+        let result = search_files(dir.path(), "hello", "");
+        assert!(result.contains("1 match"));
+        assert!(result.contains("foo.rs"));
+    }
+
+    #[test]
+    fn search_no_matches() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("foo.rs"), "fn hello() {}").unwrap();
+
+        let result = search_files(dir.path(), "nonexistent_term_xyz", "");
+        assert!(result.contains("No matches"));
+    }
+
+    #[test]
+    fn search_empty_query_rejected() {
+        let dir = tempdir().unwrap();
+        let result = search_files(dir.path(), "", "");
+        assert!(result.contains("cannot be empty"));
+    }
+
+    #[test]
+    fn search_in_subdirectory() {
+        let dir = tempdir().unwrap();
+        let sub = dir.path().join("src");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("main.rs"), "fn main() { println!(\"hi\") }").unwrap();
+        std::fs::write(dir.path().join("readme.md"), "say hi").unwrap();
+
+        // Search only in src/
+        let result = search_files(dir.path(), "hi", "src");
+        assert!(result.contains("main.rs"));
+        assert!(!result.contains("readme.md"));
+    }
+
+    #[test]
+    fn search_case_insensitive() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("test.rs"), "HELLO World").unwrap();
+
+        let result = search_files(dir.path(), "hello", "");
+        assert!(result.contains("1 match"));
     }
 }

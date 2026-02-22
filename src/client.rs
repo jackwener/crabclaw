@@ -43,6 +43,7 @@ pub async fn send_chat_request(config: &AppConfig, request: &ChatRequest) -> Res
             .text()
             .await
             .map_err(|e| CrabClawError::Network(format!("failed to read response body: {e}")))?;
+        debug!(body = %body, "raw response body");
         let chat_response: ChatResponse = serde_json::from_str(&body)?;
         return Ok(chat_response);
     }

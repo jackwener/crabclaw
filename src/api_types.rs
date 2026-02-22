@@ -35,6 +35,7 @@ pub struct ChatRequest {
 /// A single choice returned by the API.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Choice {
+    #[serde(default)]
     pub index: u32,
     pub message: Message,
     pub finish_reason: Option<String>,
@@ -43,15 +44,23 @@ pub struct Choice {
 /// Token usage statistics.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Usage {
+    #[serde(default)]
     pub prompt_tokens: u32,
+    #[serde(default)]
     pub completion_tokens: u32,
+    #[serde(default)]
     pub total_tokens: u32,
 }
 
 /// Response body from the chat completions endpoint.
+///
+/// All fields are optional or defaulted to handle non-standard API providers
+/// (e.g. GLM) that may omit OpenAI-standard fields like `id` or `choices`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatResponse {
-    pub id: String,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
     pub choices: Vec<Choice>,
     pub usage: Option<Usage>,
 }
@@ -133,7 +142,7 @@ mod tests {
         }"#;
 
         let resp: ChatResponse = serde_json::from_str(raw).expect("deserialize");
-        assert_eq!(resp.id, "chatcmpl-abc123");
+        assert_eq!(resp.id.as_deref(), Some("chatcmpl-abc123"));
         assert_eq!(resp.choices.len(), 1);
         assert_eq!(resp.choices[0].message.role, "assistant");
         assert_eq!(resp.choices[0].message.content, "Hello!");
@@ -195,5 +204,47 @@ mod tests {
         assert_eq!(detail.message, "Rate limit");
         assert_eq!(detail.error_type.as_deref(), Some("rate_limit_error"));
         assert_eq!(detail.code.as_deref(), Some("429"));
+    }
+
+    #[test]
+    fn response_minimal_no_id_no_choices() {
+        // Some API providers (e.g. GLM) return minimal responses
+        let raw = r#"{}"#;
+        let resp: ChatResponse = serde_json::from_str(raw).expect("deserialize");
+        assert!(resp.id.is_none());
+        assert!(resp.choices.is_empty());
+        assert!(resp.usage.is_none());
+        assert!(resp.assistant_content().is_none());
+    }
+
+    #[test]
+    fn response_content_only_no_id() {
+        // GLM-style response: choices but no id
+        let raw = r#"{
+            "choices": [{
+                "message": {"role": "assistant", "content": "Hello from GLM!"},
+                "finish_reason": "stop"
+            }]
+        }"#;
+        let resp: ChatResponse = serde_json::from_str(raw).expect("deserialize");
+        assert!(resp.id.is_none());
+        assert_eq!(resp.assistant_content(), Some("Hello from GLM!"));
+    }
+
+    #[test]
+    fn response_partial_usage() {
+        // Usage with only some fields present
+        let raw = r#"{
+            "choices": [{
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"total_tokens": 42}
+        }"#;
+        let resp: ChatResponse = serde_json::from_str(raw).expect("deserialize");
+        let usage = resp.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 0);
+        assert_eq!(usage.completion_tokens, 0);
+        assert_eq!(usage.total_tokens, 42);
     }
 }

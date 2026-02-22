@@ -159,7 +159,9 @@ fn run_command(args: RunArgs) -> Result<()> {
         .map_err(CrabClawError::Io)?;
 
     // Build multi-turn messages from tape context.
-    let messages = build_messages(&tape, config.system_prompt.as_deref());
+    let system_prompt =
+        crate::core::context::build_system_prompt(config.system_prompt.as_deref(), &workspace);
+    let messages = build_messages(&tape, Some(&system_prompt));
 
     let request = ChatRequest {
         model: config.model.clone(),

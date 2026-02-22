@@ -1,5 +1,53 @@
 use crate::llm::api_types::Message;
 use crate::tape::store::TapeStore;
+use std::path::Path;
+
+/// Default system prompt that tells the LLM about CrabClaw's capabilities.
+const DEFAULT_SYSTEM_PROMPT: &str = "\
+You are CrabClaw, a helpful coding assistant running in a terminal environment.
+
+You have access to the following tools:
+- shell.exec: Execute shell commands in the user's workspace
+- file.read: Read file contents (workspace-sandboxed)
+- file.write: Write or create files (workspace-sandboxed)
+- file.list: List directory contents
+
+You can also access any discovered skills from the workspace.
+
+When helping the user:
+- Be concise and actionable
+- Use tools proactively when they would help answer the question
+- If a shell command fails, analyze the error and suggest fixes
+- Prefer reading files over asking the user to paste code";
+
+/// Build the system prompt from available sources.
+///
+/// Priority (highest first):
+/// 1. Explicit config override (e.g., CLI flag or env var)
+/// 2. `.agent/system-prompt.md` from workspace
+/// 3. Default built-in prompt
+pub fn build_system_prompt(config_prompt: Option<&str>, workspace: &Path) -> String {
+    // 1. Explicit override takes precedence
+    if let Some(prompt) = config_prompt {
+        if !prompt.trim().is_empty() {
+            return prompt.to_string();
+        }
+    }
+
+    // 2. Try loading from workspace
+    let custom_path = workspace.join(".agent/system-prompt.md");
+    if custom_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&custom_path) {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+
+    // 3. Fall back to default
+    DEFAULT_SYSTEM_PROMPT.to_string()
+}
 
 /// Build a list of messages from tape entries for multi-turn conversation.
 ///
@@ -165,5 +213,44 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].content, "new question");
         assert_eq!(msgs[1].content, "new answer");
+    }
+
+    #[test]
+    fn system_prompt_config_override() {
+        let dir = tempdir().unwrap();
+        let result = build_system_prompt(Some("Custom prompt"), dir.path());
+        assert_eq!(result, "Custom prompt");
+    }
+
+    #[test]
+    fn system_prompt_workspace_file() {
+        let dir = tempdir().unwrap();
+        let agent_dir = dir.path().join(".agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(agent_dir.join("system-prompt.md"), "Workspace prompt").unwrap();
+
+        let result = build_system_prompt(None, dir.path());
+        assert_eq!(result, "Workspace prompt");
+    }
+
+    #[test]
+    fn system_prompt_default_fallback() {
+        let dir = tempdir().unwrap();
+        let result = build_system_prompt(None, dir.path());
+        assert!(result.contains("CrabClaw"));
+        assert!(result.contains("shell.exec"));
+        assert!(result.contains("file.read"));
+    }
+
+    #[test]
+    fn system_prompt_config_overrides_workspace_file() {
+        let dir = tempdir().unwrap();
+        let agent_dir = dir.path().join(".agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(agent_dir.join("system-prompt.md"), "Workspace prompt").unwrap();
+
+        // Config override should win even when workspace file exists
+        let result = build_system_prompt(Some("From config"), dir.path());
+        assert_eq!(result, "From config");
     }
 }

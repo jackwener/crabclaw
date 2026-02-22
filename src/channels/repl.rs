@@ -88,7 +88,11 @@ pub fn run_interactive(config: &AppConfig, workspace: &Path) -> Result<()> {
                     .map_err(CrabClawError::Io)?;
 
                 // Build multi-turn messages from tape
-                let mut messages = build_messages(&tape, config.system_prompt.as_deref());
+                let system_prompt = crate::core::context::build_system_prompt(
+                    config.system_prompt.as_deref(),
+                    workspace,
+                );
+                let mut messages = build_messages(&tape, Some(&system_prompt));
 
                 debug!(message_count = messages.len(), "sending multi-turn request");
 

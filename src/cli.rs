@@ -93,14 +93,37 @@ fn run_command(args: RunArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Build a minimal single-turn request.
+    // Initialize tape store for session recording.
+    let tape_dir = workspace.join(".crabclaw");
+    let mut tape = crate::tape::TapeStore::open(&tape_dir, "default").map_err(CrabClawError::Io)?;
+    tape.ensure_bootstrap_anchor().map_err(CrabClawError::Io)?;
+
+    // Route input through the command router.
+    let route = crate::router::route_user(&prompt, &mut tape);
+
+    if route.exit_requested {
+        return Ok(());
+    }
+
+    if !route.immediate_output.is_empty() {
+        println!("{}", route.immediate_output);
+    }
+
+    if !route.enter_model {
+        return Ok(());
+    }
+
+    // Record user message to tape.
+    tape.append_message("user", &route.model_prompt)
+        .map_err(CrabClawError::Io)?;
+
+    // Build and send the request.
     let request = ChatRequest {
         model: config.model.clone(),
-        messages: vec![Message::user(&prompt)],
+        messages: vec![Message::user(&route.model_prompt)],
         max_tokens: None,
     };
 
-    // Execute the request using a one-shot tokio runtime.
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -109,6 +132,9 @@ fn run_command(args: RunArgs) -> Result<()> {
     let response = rt.block_on(send_chat_request(&config, &request))?;
 
     if let Some(content) = response.assistant_content() {
+        // Record assistant response to tape.
+        tape.append_message("assistant", content)
+            .map_err(CrabClawError::Io)?;
         println!("{content}");
     } else {
         eprintln!("warning: no response content from model");

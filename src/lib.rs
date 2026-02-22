@@ -1,6 +1,9 @@
 pub mod api_types;
 pub mod cli;
 pub mod client;
+pub mod command;
 pub mod config;
 pub mod error;
 pub mod input;
+pub mod router;
+pub mod tape;

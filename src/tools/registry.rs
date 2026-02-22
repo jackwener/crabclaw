@@ -467,4 +467,63 @@ mod tests {
         assert!(params["properties"]["command"].is_object());
         assert_eq!(params["required"][0], "command");
     }
+
+    #[test]
+    fn execute_file_read_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("test.txt"), "hello from tool").unwrap();
+        let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
+        let result = execute_tool("file.read", r#"{"path": "test.txt"}"#, &tape, dir.path());
+        assert!(result.contains("hello from tool"));
+    }
+
+    #[test]
+    fn execute_file_write_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
+        let result = execute_tool(
+            "file.write",
+            r#"{"path": "out.txt", "content": "written by tool"}"#,
+            &tape,
+            dir.path(),
+        );
+        assert!(result.contains("Written"));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("out.txt")).unwrap(),
+            "written by tool"
+        );
+    }
+
+    #[test]
+    fn execute_file_list_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
+        let result = execute_tool("file.list", r#"{"path": ""}"#, &tape, dir.path());
+        assert!(result.contains("a.txt"));
+        assert!(result.contains("sub/"));
+    }
+
+    #[test]
+    fn tool_definitions_file_read_has_params() {
+        let reg = builtin_registry();
+        let defs = to_tool_definitions(&reg);
+        let def = defs.iter().find(|d| d.function.name == "file.read");
+        assert!(def.is_some());
+        let params = &def.unwrap().function.parameters;
+        assert!(params["properties"]["path"].is_object());
+        assert_eq!(params["required"][0], "path");
+    }
+
+    #[test]
+    fn tool_definitions_file_write_has_params() {
+        let reg = builtin_registry();
+        let defs = to_tool_definitions(&reg);
+        let def = defs.iter().find(|d| d.function.name == "file.write");
+        assert!(def.is_some());
+        let params = &def.unwrap().function.parameters;
+        assert!(params["properties"]["path"].is_object());
+        assert!(params["properties"]["content"].is_object());
+    }
 }

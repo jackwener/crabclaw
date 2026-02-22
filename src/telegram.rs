@@ -40,9 +40,7 @@ impl Channel for TelegramChannel {
             .config
             .telegram_token
             .as_ref()
-            .ok_or_else(|| {
-                crate::error::CrabClawError::Config("BUB_TELEGRAM_TOKEN not set".into())
-            })?
+            .ok_or_else(|| crate::error::CrabClawError::Config("TELEGRAM_TOKEN not set".into()))?
             .clone();
 
         info!("telegram.start");

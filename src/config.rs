@@ -7,15 +7,15 @@ use serde::Serialize;
 use crate::error::{CrabClawError, Result};
 
 const DEFAULT_API_BASE: &str = "https://api.example.com";
-const DEFAULT_MODEL: &str = "openclaw/default";
-const API_KEY_KEY: &str = "OPENCLAW_API_KEY";
-const API_BASE_KEY: &str = "OPENCLAW_BASE_URL";
-const MODEL_KEY: &str = "CRABCLAW_MODEL";
-const SYSTEM_PROMPT_KEY: &str = "CRABCLAW_SYSTEM_PROMPT";
-const TELEGRAM_TOKEN_KEY: &str = "BUB_TELEGRAM_TOKEN";
-const TELEGRAM_ALLOW_FROM_KEY: &str = "BUB_TELEGRAM_ALLOW_FROM";
-const TELEGRAM_ALLOW_CHATS_KEY: &str = "BUB_TELEGRAM_ALLOW_CHATS";
-const TELEGRAM_PROXY_KEY: &str = "BUB_TELEGRAM_PROXY";
+const DEFAULT_MODEL: &str = "default";
+const API_KEY_KEY: &str = "API_KEY";
+const API_BASE_KEY: &str = "BASE_URL";
+const MODEL_KEY: &str = "MODEL";
+const SYSTEM_PROMPT_KEY: &str = "SYSTEM_PROMPT";
+const TELEGRAM_TOKEN_KEY: &str = "TELEGRAM_TOKEN";
+const TELEGRAM_ALLOW_FROM_KEY: &str = "TELEGRAM_ALLOW_FROM";
+const TELEGRAM_ALLOW_CHATS_KEY: &str = "TELEGRAM_ALLOW_CHATS";
+const TELEGRAM_PROXY_KEY: &str = "TELEGRAM_PROXY";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AppConfig {
@@ -63,9 +63,9 @@ pub fn resolve_config(
 ) -> Result<AppConfig> {
     let profile_name = profile.unwrap_or("default").trim().to_string();
     let profile_token = normalize_profile_token(&profile_name);
-    let profiled_api_key = format!("CRABCLAW_PROFILE_{profile_token}_{API_KEY_KEY}");
-    let profiled_api_base = format!("CRABCLAW_PROFILE_{profile_token}_{API_BASE_KEY}");
-    let profiled_model = format!("CRABCLAW_PROFILE_{profile_token}_{MODEL_KEY}");
+    let profiled_api_key = format!("PROFILE_{profile_token}_{API_KEY_KEY}");
+    let profiled_api_base = format!("PROFILE_{profile_token}_{API_BASE_KEY}");
+    let profiled_model = format!("PROFILE_{profile_token}_{MODEL_KEY}");
 
     let api_key = first_present([
         cli_overrides.api_key.as_ref(),
@@ -74,7 +74,7 @@ pub fn resolve_config(
         dotenv_vars.get(&profiled_api_key),
         dotenv_vars.get(API_KEY_KEY),
     ])
-    .ok_or_else(|| CrabClawError::Config("missing OPENCLAW_API_KEY".to_string()))?;
+    .ok_or_else(|| CrabClawError::Config("missing API_KEY".to_string()))?;
 
     let api_base = first_present([
         cli_overrides.api_base.as_ref(),
@@ -224,28 +224,25 @@ mod tests {
     #[test]
     fn resolves_config_with_deterministic_precedence() {
         let mut env_vars = HashMap::new();
-        env_vars.insert("OPENCLAW_API_KEY".to_string(), "env-base-key".to_string());
+        env_vars.insert("API_KEY".to_string(), "env-base-key".to_string());
         env_vars.insert(
-            "CRABCLAW_PROFILE_DEV_OPENCLAW_BASE_URL".to_string(),
+            "PROFILE_DEV_BASE_URL".to_string(),
             "https://env-profile.example.com".to_string(),
         );
-        env_vars.insert("CRABCLAW_MODEL".to_string(), "env-base-model".to_string());
+        env_vars.insert("MODEL".to_string(), "env-base-model".to_string());
 
         let mut dotenv_vars = HashMap::new();
+        dotenv_vars.insert("API_KEY".to_string(), "dotenv-base-key".to_string());
         dotenv_vars.insert(
-            "OPENCLAW_API_KEY".to_string(),
-            "dotenv-base-key".to_string(),
-        );
-        dotenv_vars.insert(
-            "CRABCLAW_PROFILE_DEV_OPENCLAW_API_KEY".to_string(),
+            "PROFILE_DEV_API_KEY".to_string(),
             "dotenv-profile-key".to_string(),
         );
         dotenv_vars.insert(
-            "OPENCLAW_BASE_URL".to_string(),
+            "BASE_URL".to_string(),
             "https://dotenv-base.example.com".to_string(),
         );
         dotenv_vars.insert(
-            "CRABCLAW_PROFILE_DEV_CRABCLAW_MODEL".to_string(),
+            "PROFILE_DEV_MODEL".to_string(),
             "dotenv-profile-model".to_string(),
         );
 
@@ -273,7 +270,7 @@ mod tests {
 
         let err = resolve_config(None, &overrides, &env_vars, &dotenv_vars).expect_err("must fail");
         match err {
-            CrabClawError::Config(msg) => assert!(msg.contains("OPENCLAW_API_KEY")),
+            CrabClawError::Config(msg) => assert!(msg.contains("API_KEY")),
             other => panic!("unexpected error: {other}"),
         }
     }
@@ -281,7 +278,7 @@ mod tests {
     #[test]
     fn default_profile_used_when_none() {
         let mut env_vars = HashMap::new();
-        env_vars.insert("OPENCLAW_API_KEY".to_string(), "key".to_string());
+        env_vars.insert("API_KEY".to_string(), "key".to_string());
         let overrides = CliConfigOverrides::default();
 
         let config = resolve_config(None, &overrides, &env_vars, &HashMap::new()).unwrap();
@@ -291,22 +288,19 @@ mod tests {
     #[test]
     fn defaults_for_api_base_and_model() {
         let mut env_vars = HashMap::new();
-        env_vars.insert("OPENCLAW_API_KEY".to_string(), "key".to_string());
+        env_vars.insert("API_KEY".to_string(), "key".to_string());
         let overrides = CliConfigOverrides::default();
 
         let config = resolve_config(None, &overrides, &env_vars, &HashMap::new()).unwrap();
         assert_eq!(config.api_base, "https://api.example.com");
-        assert_eq!(config.model, "openclaw/default");
+        assert_eq!(config.model, "default");
     }
 
     #[test]
     fn system_prompt_resolved_from_env() {
         let mut env_vars = HashMap::new();
-        env_vars.insert("OPENCLAW_API_KEY".to_string(), "key".to_string());
-        env_vars.insert(
-            "CRABCLAW_SYSTEM_PROMPT".to_string(),
-            "Be concise".to_string(),
-        );
+        env_vars.insert("API_KEY".to_string(), "key".to_string());
+        env_vars.insert("SYSTEM_PROMPT".to_string(), "Be concise".to_string());
         let overrides = CliConfigOverrides::default();
 
         let config = resolve_config(None, &overrides, &env_vars, &HashMap::new()).unwrap();
@@ -316,8 +310,8 @@ mod tests {
     #[test]
     fn system_prompt_cli_overrides_env() {
         let mut env_vars = HashMap::new();
-        env_vars.insert("OPENCLAW_API_KEY".to_string(), "key".to_string());
-        env_vars.insert("CRABCLAW_SYSTEM_PROMPT".to_string(), "from env".to_string());
+        env_vars.insert("API_KEY".to_string(), "key".to_string());
+        env_vars.insert("SYSTEM_PROMPT".to_string(), "from env".to_string());
         let overrides = CliConfigOverrides {
             system_prompt: Some("from cli".to_string()),
             ..Default::default()
@@ -330,7 +324,7 @@ mod tests {
     #[test]
     fn system_prompt_none_when_unset() {
         let mut env_vars = HashMap::new();
-        env_vars.insert("OPENCLAW_API_KEY".to_string(), "key".to_string());
+        env_vars.insert("API_KEY".to_string(), "key".to_string());
         let overrides = CliConfigOverrides::default();
 
         let config = resolve_config(None, &overrides, &env_vars, &HashMap::new()).unwrap();

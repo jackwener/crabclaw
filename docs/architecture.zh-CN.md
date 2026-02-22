@@ -67,4 +67,6 @@ src/
 - **技能引擎 (Skill Engine)**：自动扫描用户工作区下的 `.agent/skills/` 目录，将基于 Markdown 编写的技能说明自动转换为智能体的活动上下文。发现的技能会被桥接到工具注册表中，作为 `skill.<name>` 工具，使其可被 LLM 直接调用。
 - **Shell 命令执行 (Shell Execution)**：未知的 `,` 前缀命令（如 `,git status`, `,ls -la`）会被作为原生 Shell 命令通过 `/bin/sh -c` 执行。执行结果会捕获 stdout/stderr/exit code。成功的结果直接返回给用户；失败的结果会被包装成结构化的 `<command>` XML 上下文并回传给 LLM 进行自我纠正。同时内置 30 秒超时保护以防止失控进程。
 - **工具调用循环 (Tool Calling Loop)**：REPL 和 Telegram 渠道均支持多轮迭代的工具调用。LLM 可以调用 `shell.exec` 来执行命令、`skill.*` 来加载技能上下文，或者任何内置工具。执行结果会被反馈给模型进行最多 5 轮的迭代推理，从而实现自主的多步骤推理能力。
-- **文件操作 (File Operations)**：LLM 可以通过 `file.read`、`file.write` 和 `file.list` 工具在工作区中读写和列出文件。所有文件操作都被限制在工作区沙箱内——路径穿越（`..`）和工作区外的绝对路径会被拒绝。大文件会被截断以防止 context 溢出。
+- **文件操作 (File Operations)**：LLM 可以通过 `file.read`、`file.write`、`file.list` 和 `file.search` 工具在工作区中读写、列出和搜索文件。所有文件操作都被限制在工作区沙箱内——路径穿越（`..`）和工作区外的绝对路径会被拒绝。大文件会被截断；搜索结果上限 50 条。
+- **系统提示词 (System Prompt)**：支持 3 层优先级的系统提示词：显式配置覆盖 > 工作区 `.agent/system-prompt.md` > 内置默认提示词（描述可用工具和行为准则）。
+

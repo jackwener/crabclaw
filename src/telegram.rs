@@ -144,7 +144,10 @@ async fn handle_message(
     }
 }
 
-async fn process_message(
+/// Process a message through the CrabClaw router + model pipeline.
+/// Exposed as pub for integration testing — call this directly to test
+/// end-to-end message handling without needing a real Telegram connection.
+pub async fn process_message(
     text: &str,
     config: &AppConfig,
     workspace: &std::path::Path,

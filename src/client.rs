@@ -16,6 +16,73 @@ struct NonStandardError {
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
+/// Response from the /models endpoint.
+#[derive(Debug, serde::Deserialize)]
+struct ModelsResponse {
+    #[serde(default)]
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ModelEntry {
+    id: String,
+}
+
+/// Validate that the configured model exists by calling the /models endpoint.
+/// Returns Ok(()) if validation passes or if the endpoint is unavailable (best-effort).
+pub async fn validate_model(config: &AppConfig) -> Result<()> {
+    let url = format!("{}/models", config.api_base.trim_end_matches('/'));
+    debug!(url = %url, model = %config.model, "validating model");
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| CrabClawError::Network(format!("failed to build HTTP client: {e}")))?;
+
+    let response = match client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", config.api_key))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("model validation skipped: {e}");
+            return Ok(()); // Best-effort: don't block if /models is unavailable
+        }
+    };
+
+    if !response.status().is_success() {
+        warn!(status = %response.status(), "model validation skipped: /models returned non-200");
+        return Ok(());
+    }
+
+    let body = response.text().await.unwrap_or_default();
+    let models: ModelsResponse = match serde_json::from_str(&body) {
+        Ok(m) => m,
+        Err(_) => {
+            warn!("model validation skipped: could not parse /models response");
+            return Ok(());
+        }
+    };
+
+    if models.data.is_empty() {
+        return Ok(()); // No model list available
+    }
+
+    let available: Vec<&str> = models.data.iter().map(|m| m.id.as_str()).collect();
+    if !available.contains(&config.model.as_str()) {
+        return Err(CrabClawError::Config(format!(
+            "model '{}' not found. Available models: {}",
+            config.model,
+            available.join(", ")
+        )));
+    }
+
+    debug!(model = %config.model, "model validation passed");
+    Ok(())
+}
+
 /// Send a chat completion request to an OpenAI-compatible endpoint.
 pub async fn send_chat_request(config: &AppConfig, request: &ChatRequest) -> Result<ChatResponse> {
     let url = format!("{}/chat/completions", config.api_base.trim_end_matches('/'));

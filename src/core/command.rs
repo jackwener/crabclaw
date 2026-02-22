@@ -13,12 +13,14 @@ pub struct DetectedCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandKind {
     Internal,
+    Shell,
 }
 
 impl fmt::Display for CommandKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CommandKind::Internal => write!(f, "internal"),
+            CommandKind::Shell => write!(f, "shell"),
         }
     }
 }
@@ -48,10 +50,28 @@ impl ParsedArgs {
 
 const INTERNAL_PREFIX: char = ',';
 
+/// Known internal command names.
+const KNOWN_INTERNAL_COMMANDS: &[&str] = &[
+    "help",
+    "quit",
+    "tape",
+    "tape.info",
+    "tape.reset",
+    "tape.search",
+    "tools",
+    "tool.describe",
+    "skills",
+    "skills.describe",
+    "anchors",
+    "handoff",
+];
+
 /// Detect whether a line of input is a command.
 ///
 /// Rules (aligned with bub):
-/// - Lines starting with `,` are internal commands.
+/// - Lines starting with `,` are commands.
+/// - If the first token matches a known internal name → `CommandKind::Internal`.
+/// - Otherwise → `CommandKind::Shell` (arbitrary shell execution).
 /// - All other input is routed to the model.
 pub fn detect_command(input: &str) -> Option<DetectedCommand> {
     let stripped = input.trim();
@@ -74,14 +94,25 @@ pub fn detect_command(input: &str) -> Option<DetectedCommand> {
     }
 
     let name = tokens[0].clone();
-    let args = parse_kv_arguments(&tokens[1..]);
+    let is_internal = KNOWN_INTERNAL_COMMANDS.iter().any(|&cmd| cmd == name);
 
-    Some(DetectedCommand {
-        kind: CommandKind::Internal,
-        name,
-        args,
-        raw: stripped.to_string(),
-    })
+    if is_internal {
+        let args = parse_kv_arguments(&tokens[1..]);
+        Some(DetectedCommand {
+            kind: CommandKind::Internal,
+            name,
+            args,
+            raw: stripped.to_string(),
+        })
+    } else {
+        // Shell command: store the full command line (everything after the comma)
+        Some(DetectedCommand {
+            kind: CommandKind::Shell,
+            name,
+            args: ParsedArgs::default(),
+            raw: body.to_string(),
+        })
+    }
 }
 
 /// Parse tool-style arguments from tokens.
@@ -273,5 +304,33 @@ mod tests {
     fn shell_split_handles_escapes() {
         let tokens = shell_split(r"hello\ world bar");
         assert_eq!(tokens, vec!["hello world", "bar"]);
+    }
+
+    #[test]
+    fn git_status_detected_as_shell() {
+        let cmd = detect_command(",git status").unwrap();
+        assert_eq!(cmd.kind, CommandKind::Shell);
+        assert_eq!(cmd.name, "git");
+        assert_eq!(cmd.raw, "git status");
+    }
+
+    #[test]
+    fn ls_detected_as_shell() {
+        let cmd = detect_command(",ls -la").unwrap();
+        assert_eq!(cmd.kind, CommandKind::Shell);
+        assert_eq!(cmd.name, "ls");
+        assert_eq!(cmd.raw, "ls -la");
+    }
+
+    #[test]
+    fn help_detected_as_internal() {
+        let cmd = detect_command(",help").unwrap();
+        assert_eq!(cmd.kind, CommandKind::Internal);
+    }
+
+    #[test]
+    fn tape_info_detected_as_internal() {
+        let cmd = detect_command(",tape.info").unwrap();
+        assert_eq!(cmd.kind, CommandKind::Internal);
     }
 }

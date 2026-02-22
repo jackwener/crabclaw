@@ -103,6 +103,45 @@ pub fn route_user(input: &str, tape: &mut TapeStore, workspace: &Path) -> UserRo
                 }
             }
         }
+        CommandKind::Shell => {
+            use crate::core::shell;
+
+            let shell_result = shell::execute_shell(&command.raw, workspace);
+            let display_output = shell::format_shell_output(&shell_result);
+
+            tape.append_event(
+                "command",
+                serde_json::json!({
+                    "origin": "human",
+                    "kind": "shell",
+                    "cmd": command.raw,
+                    "exit_code": shell_result.exit_code,
+                    "timed_out": shell_result.timed_out,
+                    "stdout": shell_result.stdout,
+                    "stderr": shell_result.stderr,
+                }),
+            )
+            .ok();
+
+            if shell_result.exit_code == 0 && !shell_result.timed_out {
+                // Success → return output directly, do not enter model.
+                UserRouteResult {
+                    enter_model: false,
+                    model_prompt: String::new(),
+                    immediate_output: display_output,
+                    exit_requested: false,
+                }
+            } else {
+                // Failure → structured context for LLM self-correction.
+                let context = shell::wrap_failure_context(&command.raw, &shell_result);
+                UserRouteResult {
+                    enter_model: true,
+                    model_prompt: context,
+                    immediate_output: display_output,
+                    exit_requested: false,
+                }
+            }
+        }
     }
 }
 
@@ -352,13 +391,62 @@ mod tests {
     }
 
     #[test]
-    fn unknown_command_falls_back_to_model() {
+    fn shell_command_executes_echo() {
         let (_dir, mut tape) = make_tape();
         let ws = workspace();
-        let result = route_user(",nonexistent", &mut tape, ws.path());
-        assert!(result.enter_model);
-        assert!(result.model_prompt.contains("unknown internal command"));
+        let result = route_user(",echo hello_shell", &mut tape, ws.path());
+        assert!(!result.enter_model);
+        assert!(result.immediate_output.contains("hello_shell"));
         assert!(!result.exit_requested);
+    }
+
+    #[test]
+    fn shell_command_failure_wraps_to_model() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_user(",exit 1", &mut tape, ws.path());
+        // Failed shell command should enter model with structured context.
+        assert!(result.enter_model);
+        assert!(result.model_prompt.contains("<command cmd="));
+        assert!(result.model_prompt.contains("exit_code=\"1\""));
+        assert!(result.model_prompt.contains("</command>"));
+    }
+
+    #[test]
+    fn shell_command_captures_stderr() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_user(",echo oops >&2", &mut tape, ws.path());
+        assert!(!result.enter_model);
+        assert!(result.immediate_output.contains("oops"));
+    }
+
+    #[test]
+    fn shell_command_records_tape_event() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        route_user(",echo tape_test", &mut tape, ws.path());
+        let entries = tape.entries();
+        let shell_events: Vec<_> = entries.iter().filter(|e| e.kind == "command").collect();
+        assert!(!shell_events.is_empty());
+        let last = shell_events.last().unwrap();
+        let data = &last.payload;
+        assert_eq!(data["kind"], "shell");
+        assert_eq!(data["exit_code"], 0);
+    }
+
+    #[test]
+    fn shell_command_git_status_type() {
+        // ,git status should be detected as Shell, not Internal.
+        let cmd = crate::core::command::detect_command(",git status").unwrap();
+        assert_eq!(cmd.kind, crate::core::command::CommandKind::Shell);
+        assert_eq!(cmd.name, "git");
+    }
+
+    #[test]
+    fn internal_command_help_type() {
+        let cmd = crate::core::command::detect_command(",help").unwrap();
+        assert_eq!(cmd.kind, crate::core::command::CommandKind::Internal);
     }
 
     #[test]

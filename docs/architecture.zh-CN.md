@@ -25,7 +25,8 @@ src/
 │   ├── router.rs       # 核心路由于分发逻辑（区分命令与自然语言）
 │   ├── input.rs        # 输入标准化（处理 CLI 参数传入还是 Stdin）
 │   ├── command.rs      # 内部命令的注册与执行（如 `help`, `tape.info`）
-│   └── context.rs      # 从 Tape 历史记录中重建模型的 Context Window
+│   ├── context.rs      # 从 Tape 历史记录中重建模型的 Context Window
+│   └── shell.rs        # Shell 命令执行器（带超时和结构化失败上下文包装）
 ├── llm/                # 外部 AI 平台交互层
 │   ├── client.rs       # 通用的对话补全客户端（适配 Anthropic 和通用的 OpenAI 格式）
 │   └── api_types.rs    # 兼容 OpenAI 格式的数据结构 (`Message`, `ToolCall`, `ToolDefinition`)
@@ -63,3 +64,4 @@ src/
 - **多端渠道接入 (Multi-channel)**：目前支持本地单次 CLI、本地交互式 REPL、以及远程 Telegram 机器人（自带白名单访问控制）。
 - **模型无关 (Model Agnostic)**：自带统一适配器，支持 `openrouter` (OpenAI 格式) 和原生的 `Anthropic` 数据结构。
 - **技能引擎 (Skill Engine)**：自动扫描用户工作区下的 `.agent/skills/` 目录，将基于 Markdown 编写的技能说明自动转换为智能体的活动上下文。
+- **Shell 命令执行 (Shell Execution)**：未知的 `,` 前缀命令（如 `,git status`, `,ls -la`）会被作为原生 Shell 命令通过 `/bin/sh -c` 执行。执行结果会捕获 stdout/stderr/exit code。成功的结果直接返回给用户；失败的结果会被包装成结构化的 `<command>` XML 上下文并回传给 LLM 进行自我纠正。同时内置 30 秒超时保护以防止失控进程。

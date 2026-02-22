@@ -11,6 +11,5 @@
 .crabclaw/
 bub_analysis.md
 docs/test-plans/vibe-coding-integration-testing.md
-.crabclaw/
+.crabclaw/*
 bub_analysis.md
-docs/test-plans/vibe-coding-integration-testing.md

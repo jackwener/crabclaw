@@ -25,7 +25,8 @@ src/
 │   ├── router.rs       # Command vs NL routing logic
 │   ├── input.rs        # Input normalization (CLI flags vs Stdin)
 │   ├── command.rs      # Internal command registry and execution (`help`, `tape.info`)
-│   └── context.rs      # Reconstructing context window from Tape history
+│   ├── context.rs      # Reconstructing context window from Tape history
+│   └── shell.rs        # Shell command executor with timeout and structured failure wrapping
 ├── llm/                # External AI Provider Boundaries
 │   ├── client.rs       # Generic chat completion client (Anthropic adapter, generic OpenAI format)
 │   └── api_types.rs    # OpenAI-compatible `Message`, `ToolCall`, `ToolDefinition`
@@ -63,3 +64,4 @@ A complete agentic loop executes roughly as follows:
 - **Multi-channel**: Currently supports local CLI, local Interactive REPL, and remote Telegram bots, with built-in access controls.
 - **Model Agnostic**: Employs an adapter wrapper for `openrouter` (OpenAI format) and native `Anthropic` schemas.
 - **Skill Engine**: Automatically scans the user's workspace for `.agent/skills/` repositories, converting Markdown-driven skill specifications into active agent context.
+- **Shell Execution**: Unknown `,` commands (e.g., `,git status`, `,ls -la`) are executed as native shell commands via `/bin/sh -c`. Stdout/stderr/exit code are captured. Successful results are returned directly; failures are wrapped in structured `<command>` XML context and fed back to the LLM for self-correction. A 30-second timeout prevents runaway processes.

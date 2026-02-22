@@ -6,6 +6,14 @@ use crate::api_types::{ApiErrorBody, ChatRequest, ChatResponse};
 use crate::config::AppConfig;
 use crate::error::{CrabClawError, Result};
 
+/// Non-standard error response (e.g. GLM returns HTTP 200 with error JSON).
+#[derive(Debug, serde::Deserialize)]
+struct NonStandardError {
+    code: Option<i32>,
+    msg: Option<String>,
+    success: Option<bool>,
+}
+
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
 /// Send a chat completion request to an OpenAI-compatible endpoint.
@@ -44,6 +52,22 @@ pub async fn send_chat_request(config: &AppConfig, request: &ChatRequest) -> Res
             .await
             .map_err(|e| CrabClawError::Network(format!("failed to read response body: {e}")))?;
         debug!(body = %body, "raw response body");
+
+        // Detect non-standard error responses (HTTP 200 but body is an error).
+        // Some providers (e.g. GLM) return {"code":500,"msg":"...","success":false}.
+        if let Ok(ns_err) = serde_json::from_str::<NonStandardError>(&body) {
+            if ns_err.success == Some(false) || ns_err.code.is_some_and(|c| c >= 400) {
+                let msg = ns_err
+                    .msg
+                    .unwrap_or_else(|| "unknown API error".to_string());
+                let code = ns_err.code.unwrap_or(0);
+                warn!(code = code, msg = %msg, "non-standard API error in 200 response");
+                return Err(CrabClawError::Api(format!(
+                    "API error (code {code}): {msg}"
+                )));
+            }
+        }
+
         let chat_response: ChatResponse = serde_json::from_str(&body)?;
         return Ok(chat_response);
     }

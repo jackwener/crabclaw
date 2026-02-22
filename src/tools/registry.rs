@@ -95,37 +95,71 @@ pub fn builtin_registry() -> ToolRegistry {
     registry.register("help", "Show available commands", "builtin");
     registry.register("tools", "List all registered tools", "builtin");
     registry.register("skills", "List discovered skills from workspace", "builtin");
+    registry.register(
+        "shell.exec",
+        "Execute a shell command in the workspace directory. Returns stdout, stderr, and exit code.",
+        "builtin",
+    );
     registry
+}
+
+/// Register discovered skills from the workspace as tools in the registry.
+pub fn register_skills(registry: &mut ToolRegistry, workspace: &std::path::Path) {
+    use crate::tools::skills::discover_skills;
+    for skill in discover_skills(workspace) {
+        registry.register(
+            &format!("skill.{}", skill.name),
+            &skill.description,
+            &skill.source,
+        );
+    }
 }
 
 /// Generate OpenAI-compatible tool definitions from the registry.
 ///
-/// Each tool is exposed as a function with no required parameters.
+/// Each tool is exposed as a function. `shell.exec` gets a `command` parameter;
+/// skill tools get no parameters (the LLM invokes them to inject context).
 pub fn to_tool_definitions(registry: &ToolRegistry) -> Vec<crate::llm::api_types::ToolDefinition> {
     registry
         .list()
         .into_iter()
-        .map(|tool| crate::llm::api_types::ToolDefinition {
-            tool_type: "function".to_string(),
-            function: crate::llm::api_types::FunctionDefinition {
-                name: tool.name.clone(),
-                description: tool.description.clone(),
-                parameters: serde_json::json!({
+        .map(|tool| {
+            let parameters = if tool.name == "shell.exec" {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "The shell command to execute"
+                        }
+                    },
+                    "required": ["command"]
+                })
+            } else {
+                serde_json::json!({
                     "type": "object",
                     "properties": {},
                     "required": []
-                }),
-            },
+                })
+            };
+            crate::llm::api_types::ToolDefinition {
+                tool_type: "function".to_string(),
+                function: crate::llm::api_types::FunctionDefinition {
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                    parameters,
+                },
+            }
         })
         .collect()
 }
 
 /// Execute a tool by name and return the result as a string.
 ///
-/// Currently supports only informational builtin tools.
+/// Supports builtin tools, `shell.exec`, and skill tools.
 pub fn execute_tool(
     name: &str,
-    _args: &str,
+    args: &str,
     tape: &crate::tape::store::TapeStore,
     workspace: &std::path::Path,
 ) -> String {
@@ -173,6 +207,40 @@ pub fn execute_tool(
                     .map(|s| format!("  {} — {} [{}]", s.name, s.description, s.source))
                     .collect::<Vec<_>>()
                     .join("\n")
+            }
+        }
+        "shell.exec" => {
+            // Parse the command argument from the JSON args string.
+            let command = match serde_json::from_str::<serde_json::Value>(args) {
+                Ok(v) => v["command"]
+                    .as_str()
+                    .unwrap_or("echo 'missing command argument'")
+                    .to_string(),
+                Err(_) => {
+                    // If args is not JSON, treat it as a raw command string.
+                    if args.trim().is_empty() {
+                        return "Error: no command provided.".to_string();
+                    }
+                    args.trim().to_string()
+                }
+            };
+
+            let result = crate::core::shell::execute_shell(&command, workspace);
+            let output = crate::core::shell::format_shell_output(&result);
+
+            if result.exit_code == 0 && !result.timed_out {
+                output
+            } else {
+                crate::core::shell::wrap_failure_context(&command, &result)
+            }
+        }
+        _ if name.starts_with("skill.") => {
+            // Skill tool: load the skill body and return as context.
+            let skill_name = &name["skill.".len()..];
+            use crate::tools::skills::load_skill_body;
+            match load_skill_body(skill_name, workspace) {
+                Some(body) => body,
+                None => format!("Skill not found: {skill_name}"),
             }
         }
         _ => format!("Unknown tool: {name}"),
@@ -253,5 +321,69 @@ mod tests {
 
         let reg = builtin_registry();
         assert!(!reg.is_empty());
+    }
+
+    #[test]
+    fn builtin_has_shell_exec() {
+        let reg = builtin_registry();
+        assert!(reg.has("shell.exec"));
+        let desc = reg.get("shell.exec").unwrap();
+        assert!(desc.description.contains("shell command"));
+    }
+
+    #[test]
+    fn execute_shell_exec_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
+        let result = execute_tool(
+            "shell.exec",
+            r#"{"command": "echo tool_works"}"#,
+            &tape,
+            dir.path(),
+        );
+        assert!(result.contains("tool_works"));
+    }
+
+    #[test]
+    fn execute_shell_exec_empty_args() {
+        let dir = tempfile::tempdir().unwrap();
+        let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
+        let result = execute_tool("shell.exec", "", &tape, dir.path());
+        assert!(result.contains("no command"));
+    }
+
+    #[test]
+    fn execute_skill_tool_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
+        let result = execute_tool("skill.nonexistent", "{}", &tape, dir.path());
+        assert!(result.contains("Skill not found"));
+    }
+
+    #[test]
+    fn register_skills_from_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join(".agent/skills/my-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: my-skill\ndescription: A test skill\n---\n# Body",
+        )
+        .unwrap();
+
+        let mut reg = builtin_registry();
+        register_skills(&mut reg, dir.path());
+        assert!(reg.has("skill.my-skill"));
+    }
+
+    #[test]
+    fn tool_definitions_shell_exec_has_params() {
+        let reg = builtin_registry();
+        let defs = to_tool_definitions(&reg);
+        let shell_def = defs.iter().find(|d| d.function.name == "shell.exec");
+        assert!(shell_def.is_some());
+        let params = &shell_def.unwrap().function.parameters;
+        assert!(params["properties"]["command"].is_object());
+        assert_eq!(params["required"][0], "command");
     }
 }

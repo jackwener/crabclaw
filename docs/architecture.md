@@ -63,5 +63,6 @@ A complete agentic loop executes roughly as follows:
 
 - **Multi-channel**: Currently supports local CLI, local Interactive REPL, and remote Telegram bots, with built-in access controls.
 - **Model Agnostic**: Employs an adapter wrapper for `openrouter` (OpenAI format) and native `Anthropic` schemas.
-- **Skill Engine**: Automatically scans the user's workspace for `.agent/skills/` repositories, converting Markdown-driven skill specifications into active agent context.
+- **Skill Engine**: Automatically scans the user's workspace for `.agent/skills/` repositories, converting Markdown-driven skill specifications into active agent context. Discovered skills are bridged into the tool registry as `skill.<name>` tools, making them callable by the LLM.
 - **Shell Execution**: Unknown `,` commands (e.g., `,git status`, `,ls -la`) are executed as native shell commands via `/bin/sh -c`. Stdout/stderr/exit code are captured. Successful results are returned directly; failures are wrapped in structured `<command>` XML context and fed back to the LLM for self-correction. A 30-second timeout prevents runaway processes.
+- **Tool Calling Loop**: Both REPL and Telegram channels support multi-iteration tool calling. The LLM can invoke `shell.exec` to run commands, `skill.*` to load skill context, or any builtin tool. Results are fed back for up to 5 iterations, enabling autonomous multi-step reasoning.

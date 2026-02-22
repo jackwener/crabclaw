@@ -63,5 +63,6 @@ src/
 
 - **多端渠道接入 (Multi-channel)**：目前支持本地单次 CLI、本地交互式 REPL、以及远程 Telegram 机器人（自带白名单访问控制）。
 - **模型无关 (Model Agnostic)**：自带统一适配器，支持 `openrouter` (OpenAI 格式) 和原生的 `Anthropic` 数据结构。
-- **技能引擎 (Skill Engine)**：自动扫描用户工作区下的 `.agent/skills/` 目录，将基于 Markdown 编写的技能说明自动转换为智能体的活动上下文。
+- **技能引擎 (Skill Engine)**：自动扫描用户工作区下的 `.agent/skills/` 目录，将基于 Markdown 编写的技能说明自动转换为智能体的活动上下文。发现的技能会被桥接到工具注册表中，作为 `skill.<name>` 工具，使其可被 LLM 直接调用。
 - **Shell 命令执行 (Shell Execution)**：未知的 `,` 前缀命令（如 `,git status`, `,ls -la`）会被作为原生 Shell 命令通过 `/bin/sh -c` 执行。执行结果会捕获 stdout/stderr/exit code。成功的结果直接返回给用户；失败的结果会被包装成结构化的 `<command>` XML 上下文并回传给 LLM 进行自我纠正。同时内置 30 秒超时保护以防止失控进程。
+- **工具调用循环 (Tool Calling Loop)**：REPL 和 Telegram 渠道均支持多轮迭代的工具调用。LLM 可以调用 `shell.exec` 来执行命令、`skill.*` 来加载技能上下文，或者任何内置工具。执行结果会被反馈给模型进行最多 5 轮的迭代推理，从而实现自主的多步骤推理能力。

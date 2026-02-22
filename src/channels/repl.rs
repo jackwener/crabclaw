@@ -42,6 +42,16 @@ pub fn run_interactive(config: &AppConfig, workspace: &Path) -> Result<()> {
         .build()
         .map_err(|e| CrabClawError::Network(format!("failed to start runtime: {e}")))?;
 
+    // Build tool definitions once (builtins + skills)
+    let mut registry = crate::tools::registry::builtin_registry();
+    crate::tools::registry::register_skills(&mut registry, workspace);
+    let tool_defs = crate::tools::registry::to_tool_definitions(&registry);
+    let tools = if tool_defs.is_empty() {
+        None
+    } else {
+        Some(tool_defs)
+    };
+
     loop {
         let cwd_name = workspace
             .file_name()
@@ -78,29 +88,80 @@ pub fn run_interactive(config: &AppConfig, workspace: &Path) -> Result<()> {
                     .map_err(CrabClawError::Io)?;
 
                 // Build multi-turn messages from tape
-                let messages = build_messages(&tape, config.system_prompt.as_deref());
+                let mut messages = build_messages(&tape, config.system_prompt.as_deref());
 
                 debug!(message_count = messages.len(), "sending multi-turn request");
 
-                let request = ChatRequest {
-                    model: config.model.clone(),
-                    messages,
-                    max_tokens: None,
-                    tools: None,
-                };
+                // Tool calling loop (up to 5 iterations)
+                const MAX_TOOL_ITERATIONS: usize = 5;
 
-                match rt.block_on(send_chat_request(config, &request)) {
-                    Ok(response) => {
-                        if let Some(content) = response.assistant_content() {
-                            tape.append_message("assistant", content)
-                                .map_err(CrabClawError::Io)?;
-                            println!("\n{content}\n");
-                        } else {
-                            eprintln!("warning: no response content from model");
+                for iteration in 0..MAX_TOOL_ITERATIONS {
+                    let request = ChatRequest {
+                        model: config.model.clone(),
+                        messages: messages.clone(),
+                        max_tokens: None,
+                        tools: tools.clone(),
+                    };
+
+                    match rt.block_on(send_chat_request(config, &request)) {
+                        Ok(response) => {
+                            // Check if model wants to call tools
+                            if response.has_tool_calls() {
+                                if let Some(tool_calls) = response.tool_calls() {
+                                    debug!(
+                                        iteration = iteration,
+                                        tool_count = tool_calls.len(),
+                                        "repl.tool_calls"
+                                    );
+
+                                    // Append the assistant message with tool_calls
+                                    messages.push(
+                                        crate::llm::api_types::Message::assistant_with_tool_calls(
+                                            tool_calls.to_vec(),
+                                        ),
+                                    );
+
+                                    // Execute each tool and append results
+                                    for tc in tool_calls {
+                                        let result = crate::tools::registry::execute_tool(
+                                            &tc.function.name,
+                                            &tc.function.arguments,
+                                            &tape,
+                                            workspace,
+                                        );
+                                        debug!(
+                                            tool = %tc.function.name,
+                                            result_len = result.len(),
+                                            "repl.tool_result"
+                                        );
+                                        println!(
+                                            "  [tool] {} → {} chars",
+                                            tc.function.name,
+                                            result.len()
+                                        );
+                                        messages.push(crate::llm::api_types::Message::tool(
+                                            &tc.id, &result,
+                                        ));
+                                    }
+                                    // Continue loop — re-call model with tool results
+                                    continue;
+                                }
+                            }
+
+                            // No tool calls — we have the final response
+                            if let Some(content) = response.assistant_content() {
+                                tape.append_message("assistant", content)
+                                    .map_err(CrabClawError::Io)?;
+                                println!("\n{content}\n");
+                            } else {
+                                eprintln!("warning: no response content from model");
+                            }
+                            break;
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("error: {e}");
+                        Err(e) => {
+                            eprintln!("error: {e}");
+                            break;
+                        }
                     }
                 }
             }

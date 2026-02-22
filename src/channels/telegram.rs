@@ -232,8 +232,9 @@ pub async fn process_message(
 
     // If we need the model, send the request (with tool calling loop)
     if route_result.enter_model {
-        // Build tool definitions from the registry
-        let registry = crate::tools::registry::builtin_registry();
+        // Build tool definitions from the registry (builtins + skills)
+        let mut registry = crate::tools::registry::builtin_registry();
+        crate::tools::registry::register_skills(&mut registry, workspace);
         let tool_defs = crate::tools::registry::to_tool_definitions(&registry);
         let tools = if tool_defs.is_empty() {
             None

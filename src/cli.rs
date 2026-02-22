@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
@@ -26,6 +27,8 @@ enum Commands {
     Run(RunArgs),
     /// Start an interactive REPL session
     Interactive(InteractiveArgs),
+    /// Start channel server (Telegram, etc.)
+    Serve(ServeArgs),
 }
 
 #[derive(Debug, Args)]
@@ -62,6 +65,20 @@ struct InteractiveArgs {
     system_prompt: Option<String>,
 }
 
+#[derive(Debug, Args)]
+struct ServeArgs {
+    #[arg(long)]
+    profile: Option<String>,
+    #[arg(long = "api-key")]
+    api_key: Option<String>,
+    #[arg(long = "api-base")]
+    api_base: Option<String>,
+    #[arg(long)]
+    model: Option<String>,
+    #[arg(long = "system-prompt")]
+    system_prompt: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct DryRunOutput {
     mode: String,
@@ -86,6 +103,7 @@ fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Run(args) => run_command(args),
         Commands::Interactive(args) => interactive_command(args),
+        Commands::Serve(args) => serve_command(args),
     }
 }
 
@@ -177,4 +195,27 @@ fn interactive_command(args: InteractiveArgs) -> Result<()> {
     };
     let config = load_runtime_config(&workspace, args.profile.as_deref(), &overrides)?;
     crate::repl::run_interactive(&config, &workspace)
+}
+
+fn serve_command(args: ServeArgs) -> Result<()> {
+    let workspace = std::env::current_dir().map_err(CrabClawError::Io)?;
+    let overrides = CliConfigOverrides {
+        api_key: args.api_key,
+        api_base: args.api_base,
+        model: args.model,
+        system_prompt: args.system_prompt,
+    };
+    let config = load_runtime_config(&workspace, args.profile.as_deref(), &overrides)?;
+    let config = Arc::new(config);
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| CrabClawError::Network(format!("failed to start runtime: {e}")))?;
+
+    rt.block_on(async {
+        let mut manager =
+            crate::channel_manager::ChannelManager::new(Arc::clone(&config), &workspace);
+        manager.run().await
+    })
 }

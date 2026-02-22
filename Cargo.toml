@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5.31", features = ["derive"] }
 dirs = "6"
@@ -11,8 +12,9 @@ reqwest = { version = "0.12", features = ["json"] }
 rustyline = "15"
 serde = { version = "1.0.218", features = ["derive"] }
 serde_json = "1.0.140"
+teloxide = { version = "0.13", features = ["macros"] }
 thiserror = "2.0.12"
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

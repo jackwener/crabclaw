@@ -1,4 +1,6 @@
 pub mod api_types;
+pub mod channel;
+pub mod channel_manager;
 pub mod cli;
 pub mod client;
 pub mod command;
@@ -10,4 +12,5 @@ pub mod repl;
 pub mod router;
 pub mod skills;
 pub mod tape;
+pub mod telegram;
 pub mod tools;

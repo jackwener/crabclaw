@@ -12,6 +12,10 @@ const API_KEY_KEY: &str = "OPENCLAW_API_KEY";
 const API_BASE_KEY: &str = "OPENCLAW_BASE_URL";
 const MODEL_KEY: &str = "CRABCLAW_MODEL";
 const SYSTEM_PROMPT_KEY: &str = "CRABCLAW_SYSTEM_PROMPT";
+const TELEGRAM_TOKEN_KEY: &str = "BUB_TELEGRAM_TOKEN";
+const TELEGRAM_ALLOW_FROM_KEY: &str = "BUB_TELEGRAM_ALLOW_FROM";
+const TELEGRAM_ALLOW_CHATS_KEY: &str = "BUB_TELEGRAM_ALLOW_CHATS";
+const TELEGRAM_PROXY_KEY: &str = "BUB_TELEGRAM_PROXY";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AppConfig {
@@ -20,6 +24,17 @@ pub struct AppConfig {
     pub api_base: String,
     pub model: String,
     pub system_prompt: Option<String>,
+    // Telegram channel config
+    pub telegram_token: Option<String>,
+    pub telegram_allow_from: Vec<String>,
+    pub telegram_allow_chats: Vec<String>,
+    pub telegram_proxy: Option<String>,
+}
+
+impl AppConfig {
+    pub fn telegram_enabled(&self) -> bool {
+        self.telegram_token.is_some()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -87,12 +102,50 @@ pub fn resolve_config(
         dotenv_vars.get(SYSTEM_PROMPT_KEY),
     ]);
 
+    let telegram_token = first_present([
+        env_vars.get(TELEGRAM_TOKEN_KEY),
+        dotenv_vars.get(TELEGRAM_TOKEN_KEY),
+    ]);
+
+    let telegram_allow_from = first_present([
+        env_vars.get(TELEGRAM_ALLOW_FROM_KEY),
+        dotenv_vars.get(TELEGRAM_ALLOW_FROM_KEY),
+    ])
+    .map(|s| {
+        s.split(',')
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .collect()
+    })
+    .unwrap_or_default();
+
+    let telegram_allow_chats = first_present([
+        env_vars.get(TELEGRAM_ALLOW_CHATS_KEY),
+        dotenv_vars.get(TELEGRAM_ALLOW_CHATS_KEY),
+    ])
+    .map(|s| {
+        s.split(',')
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .collect()
+    })
+    .unwrap_or_default();
+
+    let telegram_proxy = first_present([
+        env_vars.get(TELEGRAM_PROXY_KEY),
+        dotenv_vars.get(TELEGRAM_PROXY_KEY),
+    ]);
+
     Ok(AppConfig {
         profile: profile_name,
         api_key,
         api_base,
         model,
         system_prompt,
+        telegram_token,
+        telegram_allow_from,
+        telegram_allow_chats,
+        telegram_proxy,
     })
 }
 

@@ -92,6 +92,10 @@ mod tests {
             api_base: api_base.to_string(),
             model: "test-model".to_string(),
             system_prompt: None,
+            telegram_token: None,
+            telegram_allow_from: vec![],
+            telegram_allow_chats: vec![],
+            telegram_proxy: None,
         }
     }
 

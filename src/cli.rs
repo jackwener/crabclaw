@@ -164,6 +164,7 @@ fn run_command(args: RunArgs) -> Result<()> {
         model: config.model.clone(),
         messages,
         max_tokens: None,
+        tools: None,
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()

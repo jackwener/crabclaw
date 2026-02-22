@@ -81,12 +81,38 @@ async fn handle_message(
     config: Arc<AppConfig>,
     workspace: &std::path::Path,
 ) {
-    // Extract text content
+    // Extract text content from various message types
     let text = match &msg.kind {
         MessageKind::Common(common) => match &common.media_kind {
             MediaKind::Text(t) => t.text.clone(),
+            MediaKind::Photo(p) => {
+                let caption = p.caption.clone().unwrap_or_default();
+                if caption.is_empty() {
+                    "[Photo received]".to_string()
+                } else {
+                    format!("[Photo] {caption}")
+                }
+            }
+            MediaKind::Document(d) => {
+                let file_name = d
+                    .document
+                    .file_name
+                    .clone()
+                    .unwrap_or_else(|| "unnamed".to_string());
+                let caption = d.caption.clone().unwrap_or_default();
+                if caption.is_empty() {
+                    format!("[Document: {file_name}]")
+                } else {
+                    format!("[Document: {file_name}] {caption}")
+                }
+            }
+            MediaKind::Voice(_v) => "[Voice message received]".to_string(),
+            MediaKind::Sticker(s) => {
+                let emoji = s.sticker.emoji.clone().unwrap_or_default();
+                format!("[Sticker: {emoji}]")
+            }
             _ => {
-                debug!("telegram.ignore non-text message");
+                debug!("telegram.ignore unsupported media type");
                 return;
             }
         },
@@ -128,11 +154,22 @@ async fn handle_message(
         "telegram.inbound"
     );
 
-    // Send typing indicator
-    let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
+    // Sustained typing indicator — sends every 4 seconds until processing completes
+    let bot_clone = bot.clone();
+    let typing_handle = tokio::spawn(async move {
+        loop {
+            let _ = bot_clone
+                .send_chat_action(chat_id, ChatAction::Typing)
+                .await;
+            tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+        }
+    });
 
-    // Process through CrabClaw router
+    // Process through CrabClaw router + model + tool calling
     let response = process_message(&text, &config, workspace, &session_id).await;
+
+    // Stop typing indicator
+    typing_handle.abort();
 
     if let Some(reply) = response.to_reply() {
         // Telegram has a 4096 char limit per message
@@ -144,9 +181,16 @@ async fn handle_message(
     }
 }
 
+/// Maximum number of tool calling iterations to prevent infinite loops.
+const MAX_TOOL_ITERATIONS: usize = 5;
+
 /// Process a message through the CrabClaw router + model pipeline.
 /// Exposed as pub for integration testing — call this directly to test
 /// end-to-end message handling without needing a real Telegram connection.
+///
+/// Supports tool calling: if the model returns tool_calls, this function
+/// executes the tools and re-invokes the model with tool results, up to
+/// MAX_TOOL_ITERATIONS times.
 pub async fn process_message(
     text: &str,
     config: &AppConfig,
@@ -186,24 +230,74 @@ pub async fn process_message(
         ..Default::default()
     };
 
-    // If we need the model, send the request
+    // If we need the model, send the request (with tool calling loop)
     if route_result.enter_model {
-        let messages = build_messages(&tape, config.system_prompt.as_deref());
-        let request = crate::api_types::ChatRequest {
-            model: config.model.clone(),
-            messages,
-            max_tokens: None,
+        // Build tool definitions from the registry
+        let registry = crate::tools::builtin_registry();
+        let tool_defs = crate::tools::to_tool_definitions(&registry);
+        let tools = if tool_defs.is_empty() {
+            None
+        } else {
+            Some(tool_defs)
         };
 
-        match crate::client::send_chat_request(config, &request).await {
-            Ok(chat_response) => {
-                if let Some(content) = chat_response.assistant_content() {
-                    tape.append_message("assistant", content).ok();
-                    response.assistant_output = Some(content.to_string());
+        let mut messages = build_messages(&tape, config.system_prompt.as_deref());
+
+        for iteration in 0..MAX_TOOL_ITERATIONS {
+            let request = crate::api_types::ChatRequest {
+                model: config.model.clone(),
+                messages: messages.clone(),
+                max_tokens: None,
+                tools: tools.clone(),
+            };
+
+            match crate::client::send_chat_request(config, &request).await {
+                Ok(chat_response) => {
+                    // Check if model wants to call tools
+                    if chat_response.has_tool_calls() {
+                        if let Some(tool_calls) = chat_response.tool_calls() {
+                            debug!(
+                                iteration = iteration,
+                                tool_count = tool_calls.len(),
+                                "telegram.tool_calls"
+                            );
+
+                            // Append the assistant message with tool_calls to context
+                            messages.push(crate::api_types::Message::assistant_with_tool_calls(
+                                tool_calls.to_vec(),
+                            ));
+
+                            // Execute each tool and append results
+                            for tc in tool_calls {
+                                let result = crate::tools::execute_tool(
+                                    &tc.function.name,
+                                    &tc.function.arguments,
+                                    &tape,
+                                    workspace,
+                                );
+                                debug!(
+                                    tool = %tc.function.name,
+                                    result = %result,
+                                    "telegram.tool_result"
+                                );
+                                messages.push(crate::api_types::Message::tool(&tc.id, &result));
+                            }
+                            // Continue loop — re-call model with tool results
+                            continue;
+                        }
+                    }
+
+                    // No tool calls — we have the final response
+                    if let Some(content) = chat_response.assistant_content() {
+                        tape.append_message("assistant", content).ok();
+                        response.assistant_output = Some(content.to_string());
+                    }
+                    break;
                 }
-            }
-            Err(e) => {
-                response.error = Some(format!("{e}"));
+                Err(e) => {
+                    response.error = Some(format!("{e}"));
+                    break;
+                }
             }
         }
     }

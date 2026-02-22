@@ -82,14 +82,101 @@ impl Default for ToolRegistry {
 /// Create a registry with CrabClaw's built-in tools pre-registered.
 pub fn builtin_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
-    registry.register("tape.info", "Show tape session info", "builtin");
-    registry.register("tape.reset", "Reset the tape session", "builtin");
+    registry.register(
+        "tape.info",
+        "Show tape session info (entry count, file path)",
+        "builtin",
+    );
+    registry.register(
+        "tape.reset",
+        "Reset the tape session and clear conversation history",
+        "builtin",
+    );
     registry.register("help", "Show available commands", "builtin");
-    registry.register("quit", "Exit the application", "builtin");
-    registry.register("tools", "List registered tools", "builtin");
-    registry.register("skills", "List discovered skills", "builtin");
-    registry.register("skills.describe", "Show full skill content", "builtin");
+    registry.register("tools", "List all registered tools", "builtin");
+    registry.register("skills", "List discovered skills from workspace", "builtin");
     registry
+}
+
+/// Generate OpenAI-compatible tool definitions from the registry.
+///
+/// Each tool is exposed as a function with no required parameters.
+pub fn to_tool_definitions(registry: &ToolRegistry) -> Vec<crate::api_types::ToolDefinition> {
+    registry
+        .list()
+        .into_iter()
+        .map(|tool| crate::api_types::ToolDefinition {
+            tool_type: "function".to_string(),
+            function: crate::api_types::FunctionDefinition {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }),
+            },
+        })
+        .collect()
+}
+
+/// Execute a tool by name and return the result as a string.
+///
+/// Currently supports only informational builtin tools.
+pub fn execute_tool(
+    name: &str,
+    _args: &str,
+    tape: &crate::tape::TapeStore,
+    workspace: &std::path::Path,
+) -> String {
+    match name {
+        "tape.info" => {
+            let info = tape.info();
+            format!(
+                "Tape: {}\nEntries: {}\nAnchors: {}\nLast anchor: {}",
+                info.name,
+                info.entries,
+                info.anchors,
+                info.last_anchor.as_deref().unwrap_or("none")
+            )
+        }
+        "tape.reset" => {
+            // Note: actual reset requires &mut TapeStore, so we just report status
+            "Tape reset is only available via the ,tape.reset command.".to_string()
+        }
+        "help" => {
+            let registry = builtin_registry();
+            let tools: Vec<String> = registry
+                .list()
+                .iter()
+                .map(|t| format!("  ,{}: {}", t.name, t.description))
+                .collect();
+            format!("Available commands:\n{}", tools.join("\n"))
+        }
+        "tools" => {
+            let registry = builtin_registry();
+            let rows = registry.compact_rows();
+            if rows.is_empty() {
+                "No tools registered.".to_string()
+            } else {
+                rows.join("\n")
+            }
+        }
+        "skills" => {
+            use crate::skills::discover_skills;
+            let skills = discover_skills(workspace);
+            if skills.is_empty() {
+                "No skills discovered.".to_string()
+            } else {
+                skills
+                    .iter()
+                    .map(|s| format!("  {} — {} [{}]", s.name, s.description, s.source))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        }
+        _ => format!("Unknown tool: {name}"),
+    }
 }
 
 #[cfg(test)]
@@ -153,11 +240,9 @@ mod tests {
         assert!(reg.has("tape.info"));
         assert!(reg.has("tape.reset"));
         assert!(reg.has("help"));
-        assert!(reg.has("quit"));
         assert!(reg.has("tools"));
         assert!(reg.has("skills"));
-        assert!(reg.has("skills.describe"));
-        assert!(reg.len() >= 7);
+        assert!(reg.len() >= 5);
     }
 
     #[test]

@@ -224,6 +224,7 @@ mod tests {
             model: "test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
+            tools: None,
         };
 
         let err = send_chat_request(&config, &request).await.unwrap_err();
@@ -250,6 +251,7 @@ mod tests {
             model: "test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
+            tools: None,
         };
 
         let err = send_chat_request(&config, &request).await.unwrap_err();
@@ -276,6 +278,7 @@ mod tests {
             model: "test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
+            tools: None,
         };
 
         let err = send_chat_request(&config, &request).await.unwrap_err();
@@ -317,6 +320,7 @@ mod tests {
             model: "test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: Some(100),
+            tools: None,
         };
 
         let resp = send_chat_request(&config, &request)
@@ -342,6 +346,7 @@ mod tests {
             model: "test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
+            tools: None,
         };
 
         let err = send_chat_request(&config, &request).await.unwrap_err();
@@ -367,6 +372,7 @@ mod tests {
             model: "test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
+            tools: None,
         };
 
         let err = send_chat_request(&config, &request).await.unwrap_err();
@@ -393,6 +399,7 @@ mod tests {
             model: "test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
+            tools: None,
         };
 
         let err = send_chat_request(&config, &request).await.unwrap_err();
@@ -418,6 +425,7 @@ mod tests {
             model: "test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
+            tools: None,
         };
 
         let err = send_chat_request(&config, &request).await.unwrap_err();

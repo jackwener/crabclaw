@@ -86,6 +86,7 @@ pub fn run_interactive(config: &AppConfig, workspace: &Path) -> Result<()> {
                     model: config.model.clone(),
                     messages,
                     max_tokens: None,
+                    tools: None,
                 };
 
                 match rt.block_on(send_chat_request(config, &request)) {

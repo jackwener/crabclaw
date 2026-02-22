@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 pub struct Message {
     pub role: String,
     pub content: String,
+    /// Tool calls requested by the assistant (only present when role=assistant).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    /// ID of the tool call this message is responding to (only when role=tool).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tool_call_id: Option<String>,
 }
 
 impl Message {
@@ -12,6 +18,8 @@ impl Message {
         Self {
             role: "user".to_string(),
             content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
         }
     }
 
@@ -19,8 +27,79 @@ impl Message {
         Self {
             role: "system".to_string(),
             content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
         }
     }
+
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    /// Create a tool result message.
+    pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id.into()),
+        }
+    }
+
+    /// Create an assistant message carrying tool calls (no text content).
+    pub fn assistant_with_tool_calls(tool_calls: Vec<ToolCall>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(tool_calls),
+            tool_call_id: None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tool / Function Calling types
+// ---------------------------------------------------------------------------
+
+/// A tool call requested by the model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(rename = "type", default = "default_tool_type")]
+    pub call_type: String,
+    pub function: ToolCallFunction,
+}
+
+fn default_tool_type() -> String {
+    "function".to_string()
+}
+
+/// The function inside a tool call.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolCallFunction {
+    pub name: String,
+    pub arguments: String,
+}
+
+/// Tool definition sent to the API to describe available functions.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolDefinition {
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    pub function: FunctionDefinition,
+}
+
+/// Function metadata within a tool definition.
+#[derive(Debug, Clone, Serialize)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
 }
 
 /// Request body for the chat completions endpoint.
@@ -30,6 +109,8 @@ pub struct ChatRequest {
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ToolDefinition>>,
 }
 
 /// A single choice returned by the API.
@@ -39,6 +120,16 @@ pub struct Choice {
     pub index: u32,
     pub message: Message,
     pub finish_reason: Option<String>,
+}
+
+impl Choice {
+    /// Check if this choice has tool calls.
+    pub fn has_tool_calls(&self) -> bool {
+        self.message
+            .tool_calls
+            .as_ref()
+            .is_some_and(|tc| !tc.is_empty())
+    }
 }
 
 /// Token usage statistics.
@@ -68,7 +159,22 @@ pub struct ChatResponse {
 impl ChatResponse {
     /// Extract the assistant's reply text from the first choice.
     pub fn assistant_content(&self) -> Option<&str> {
-        self.choices.first().map(|c| c.message.content.as_str())
+        self.choices
+            .first()
+            .map(|c| c.message.content.as_str())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Check if the response contains tool calls.
+    pub fn has_tool_calls(&self) -> bool {
+        self.choices.first().is_some_and(|c| c.has_tool_calls())
+    }
+
+    /// Extract tool calls from the first choice.
+    pub fn tool_calls(&self) -> Option<&[ToolCall]> {
+        self.choices
+            .first()
+            .and_then(|c| c.message.tool_calls.as_deref())
     }
 }
 
@@ -149,6 +255,8 @@ impl AnthropicResponse {
                 message: Message {
                     role: "assistant".to_string(),
                     content: text,
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
                 finish_reason: self.stop_reason,
             }]
@@ -179,6 +287,7 @@ mod tests {
             model: "gpt-4".to_string(),
             messages: vec![Message::system("You are helpful."), Message::user("Hello")],
             max_tokens: Some(1024),
+            tools: None,
         };
 
         let json = serde_json::to_value(&req).expect("serialize");
@@ -198,6 +307,7 @@ mod tests {
             model: "gpt-4".to_string(),
             messages: vec![Message::user("Hi")],
             max_tokens: None,
+            tools: None,
         };
         let json = serde_json::to_value(&req).expect("serialize");
         assert!(json.get("max_tokens").is_none());

@@ -236,3 +236,75 @@ async fn process_message_maintains_session_tape() {
     mock2.assert_async().await;
     assert_eq!(response2.assistant_output.as_deref(), Some("second reply"));
 }
+
+/// Tool calling: model returns tool_calls → execute → re-call model → final reply.
+#[tokio::test]
+async fn process_message_handles_tool_calling_loop() {
+    let mut server = mockito::Server::new_async().await;
+
+    // First API call: model returns tool_calls instead of text
+    let tool_call_mock = server
+        .mock("POST", "/chat/completions")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "call_123",
+                            "type": "function",
+                            "function": {
+                                "name": "tools",
+                                "arguments": "{}"
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            }"#,
+        )
+        .create_async()
+        .await;
+
+    // Second API call: after tool results, model returns final text
+    let final_mock = server
+        .mock("POST", "/chat/completions")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+                "choices": [{
+                    "message": {"role": "assistant", "content": "I found 5 tools available."},
+                    "finish_reason": "stop"
+                }]
+            }"#,
+        )
+        .create_async()
+        .await;
+
+    let config = test_config(&server.url());
+    let workspace = TempDir::new().unwrap();
+
+    let response = process_message(
+        "what tools do you have?",
+        &config,
+        workspace.path(),
+        "test:session_tool",
+    )
+    .await;
+
+    tool_call_mock.assert_async().await;
+    final_mock.assert_async().await;
+    assert!(
+        response.error.is_none(),
+        "unexpected error: {:?}",
+        response.error
+    );
+    assert_eq!(
+        response.assistant_output.as_deref(),
+        Some("I found 5 tools available.")
+    );
+}

@@ -40,6 +40,8 @@ pub fn build_messages(tape: &TapeStore, system_prompt: Option<&str>) -> Vec<Mess
         messages.push(Message {
             role: role.to_string(),
             content: content.to_string(),
+            tool_calls: None,
+            tool_call_id: None,
         });
     }
 

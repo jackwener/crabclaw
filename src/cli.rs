@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 
-use crate::api_types::{ChatRequest, Message};
+use crate::api_types::ChatRequest;
 use crate::client::send_chat_request;
 use crate::config::{CliConfigOverrides, load_runtime_config};
+use crate::context::build_messages;
 use crate::error::{CrabClawError, Result};
 use crate::input::resolve_prompt;
 
@@ -21,7 +22,10 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Execute a single prompt (one-shot or routed)
     Run(RunArgs),
+    /// Start an interactive REPL session
+    Interactive(InteractiveArgs),
 }
 
 #[derive(Debug, Args)]
@@ -38,8 +42,24 @@ struct RunArgs {
     api_base: Option<String>,
     #[arg(long)]
     model: Option<String>,
+    #[arg(long = "system-prompt")]
+    system_prompt: Option<String>,
     #[arg(long, default_value_t = false)]
     dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct InteractiveArgs {
+    #[arg(long)]
+    profile: Option<String>,
+    #[arg(long = "api-key")]
+    api_key: Option<String>,
+    #[arg(long = "api-base")]
+    api_base: Option<String>,
+    #[arg(long)]
+    model: Option<String>,
+    #[arg(long = "system-prompt")]
+    system_prompt: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,6 +85,7 @@ pub fn run() -> Result<()> {
 fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Run(args) => run_command(args),
+        Commands::Interactive(args) => interactive_command(args),
     }
 }
 
@@ -74,6 +95,7 @@ fn run_command(args: RunArgs) -> Result<()> {
         api_key: args.api_key,
         api_base: args.api_base,
         model: args.model,
+        system_prompt: args.system_prompt,
     };
     let config = load_runtime_config(&workspace, args.profile.as_deref(), &overrides)?;
     let prompt = resolve_prompt(args.prompt, args.prompt_file)?;
@@ -117,10 +139,12 @@ fn run_command(args: RunArgs) -> Result<()> {
     tape.append_message("user", &route.model_prompt)
         .map_err(CrabClawError::Io)?;
 
-    // Build and send the request.
+    // Build multi-turn messages from tape context.
+    let messages = build_messages(&tape, config.system_prompt.as_deref());
+
     let request = ChatRequest {
         model: config.model.clone(),
-        messages: vec![Message::user(&route.model_prompt)],
+        messages,
         max_tokens: None,
     };
 
@@ -141,4 +165,16 @@ fn run_command(args: RunArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn interactive_command(args: InteractiveArgs) -> Result<()> {
+    let workspace = std::env::current_dir().map_err(CrabClawError::Io)?;
+    let overrides = CliConfigOverrides {
+        api_key: args.api_key,
+        api_base: args.api_base,
+        model: args.model,
+        system_prompt: args.system_prompt,
+    };
+    let config = load_runtime_config(&workspace, args.profile.as_deref(), &overrides)?;
+    crate::repl::run_interactive(&config, &workspace)
 }

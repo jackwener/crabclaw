@@ -11,6 +11,7 @@ const DEFAULT_MODEL: &str = "openclaw/default";
 const API_KEY_KEY: &str = "OPENCLAW_API_KEY";
 const API_BASE_KEY: &str = "OPENCLAW_BASE_URL";
 const MODEL_KEY: &str = "CRABCLAW_MODEL";
+const SYSTEM_PROMPT_KEY: &str = "CRABCLAW_SYSTEM_PROMPT";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AppConfig {
@@ -18,6 +19,7 @@ pub struct AppConfig {
     pub api_key: String,
     pub api_base: String,
     pub model: String,
+    pub system_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -25,6 +27,7 @@ pub struct CliConfigOverrides {
     pub api_key: Option<String>,
     pub api_base: Option<String>,
     pub model: Option<String>,
+    pub system_prompt: Option<String>,
 }
 
 pub fn load_runtime_config(
@@ -78,11 +81,18 @@ pub fn resolve_config(
     ])
     .unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
+    let system_prompt = first_present([
+        cli_overrides.system_prompt.as_ref(),
+        env_vars.get(SYSTEM_PROMPT_KEY),
+        dotenv_vars.get(SYSTEM_PROMPT_KEY),
+    ]);
+
     Ok(AppConfig {
         profile: profile_name,
         api_key,
         api_base,
         model,
+        system_prompt,
     })
 }
 
@@ -190,6 +200,7 @@ mod tests {
             api_key: Some("cli-key".to_string()),
             api_base: None,
             model: Some("cli-model".to_string()),
+            system_prompt: None,
         };
 
         let config =

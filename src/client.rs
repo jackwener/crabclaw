@@ -91,6 +91,7 @@ mod tests {
             api_key: "test-key".to_string(),
             api_base: api_base.to_string(),
             model: "test-model".to_string(),
+            system_prompt: None,
         }
     }
 

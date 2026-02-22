@@ -1,0 +1,167 @@
+use serde::{Deserialize, Serialize};
+
+/// A single message in the chat conversation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Message {
+    pub role: String,
+    pub content: String,
+}
+
+impl Message {
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: content.into(),
+        }
+    }
+
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: "system".to_string(),
+            content: content.into(),
+        }
+    }
+}
+
+/// Request body for the chat completions endpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatRequest {
+    pub model: String,
+    pub messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+}
+
+/// A single choice returned by the API.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Choice {
+    pub index: u32,
+    pub message: Message,
+    pub finish_reason: Option<String>,
+}
+
+/// Token usage statistics.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Usage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+}
+
+/// Response body from the chat completions endpoint.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChatResponse {
+    pub id: String,
+    pub choices: Vec<Choice>,
+    pub usage: Option<Usage>,
+}
+
+impl ChatResponse {
+    /// Extract the assistant's reply text from the first choice.
+    pub fn assistant_content(&self) -> Option<&str> {
+        self.choices.first().map(|c| c.message.content.as_str())
+    }
+}
+
+/// Error body returned by the API on failure.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiErrorBody {
+    pub error: Option<ApiErrorDetail>,
+}
+
+/// Detail inside an API error response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiErrorDetail {
+    pub message: String,
+    #[serde(rename = "type")]
+    pub error_type: Option<String>,
+    pub code: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // TP-006: Serialize request model
+    #[test]
+    fn chat_request_serializes_to_expected_shape() {
+        let req = ChatRequest {
+            model: "gpt-4".to_string(),
+            messages: vec![Message::system("You are helpful."), Message::user("Hello")],
+            max_tokens: Some(1024),
+        };
+
+        let json = serde_json::to_value(&req).expect("serialize");
+        assert_eq!(json["model"], "gpt-4");
+        assert_eq!(json["max_tokens"], 1024);
+        assert_eq!(json["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(json["messages"][0]["role"], "system");
+        assert_eq!(json["messages"][0]["content"], "You are helpful.");
+        assert_eq!(json["messages"][1]["role"], "user");
+        assert_eq!(json["messages"][1]["content"], "Hello");
+    }
+
+    // TP-006: max_tokens omitted when None
+    #[test]
+    fn chat_request_omits_null_max_tokens() {
+        let req = ChatRequest {
+            model: "gpt-4".to_string(),
+            messages: vec![Message::user("Hi")],
+            max_tokens: None,
+        };
+        let json = serde_json::to_value(&req).expect("serialize");
+        assert!(json.get("max_tokens").is_none());
+    }
+
+    // TP-007: Deserialize success response
+    #[test]
+    fn chat_response_deserializes_from_json() {
+        let raw = r#"{
+            "id": "chatcmpl-abc123",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Hello!"},
+                    "finish_reason": "stop"
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15
+            }
+        }"#;
+
+        let resp: ChatResponse = serde_json::from_str(raw).expect("deserialize");
+        assert_eq!(resp.id, "chatcmpl-abc123");
+        assert_eq!(resp.choices.len(), 1);
+        assert_eq!(resp.choices[0].message.role, "assistant");
+        assert_eq!(resp.choices[0].message.content, "Hello!");
+        assert_eq!(resp.choices[0].finish_reason.as_deref(), Some("stop"));
+        assert_eq!(resp.assistant_content(), Some("Hello!"));
+
+        let usage = resp.usage.expect("usage present");
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 5);
+        assert_eq!(usage.total_tokens, 15);
+    }
+
+    // TP-007: Deserialize response without usage
+    #[test]
+    fn chat_response_handles_missing_usage() {
+        let raw = r#"{
+            "id": "chatcmpl-xyz",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Hi"},
+                    "finish_reason": null
+                }
+            ]
+        }"#;
+
+        let resp: ChatResponse = serde_json::from_str(raw).expect("deserialize");
+        assert!(resp.usage.is_none());
+        assert!(resp.choices[0].finish_reason.is_none());
+    }
+}

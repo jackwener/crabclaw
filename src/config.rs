@@ -86,7 +86,7 @@ pub fn resolve_config(
     })
 }
 
-fn first_present<'a, const N: usize>(values: [Option<&'a String>; N]) -> Option<String> {
+fn first_present<const N: usize>(values: [Option<&String>; N]) -> Option<String> {
     values.into_iter().flatten().find_map(|value| {
         let trimmed = value.trim();
         if trimmed.is_empty() {
@@ -169,7 +169,10 @@ mod tests {
         env_vars.insert("CRABCLAW_MODEL".to_string(), "env-base-model".to_string());
 
         let mut dotenv_vars = HashMap::new();
-        dotenv_vars.insert("OPENCLAW_API_KEY".to_string(), "dotenv-base-key".to_string());
+        dotenv_vars.insert(
+            "OPENCLAW_API_KEY".to_string(),
+            "dotenv-base-key".to_string(),
+        );
         dotenv_vars.insert(
             "CRABCLAW_PROFILE_DEV_OPENCLAW_API_KEY".to_string(),
             "dotenv-profile-key".to_string(),
@@ -189,7 +192,8 @@ mod tests {
             model: Some("cli-model".to_string()),
         };
 
-        let config = resolve_config(Some("dev"), &overrides, &env_vars, &dotenv_vars).expect("must resolve");
+        let config =
+            resolve_config(Some("dev"), &overrides, &env_vars, &dotenv_vars).expect("must resolve");
 
         assert_eq!(config.profile, "dev");
         assert_eq!(config.api_key, "cli-key");

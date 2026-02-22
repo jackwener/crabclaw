@@ -3,12 +3,17 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 
+use crate::api_types::{ChatRequest, Message};
+use crate::client::send_chat_request;
 use crate::config::{CliConfigOverrides, load_runtime_config};
 use crate::error::{CrabClawError, Result};
 use crate::input::resolve_prompt;
 
 #[derive(Debug, Parser)]
-#[command(name = "crabclaw", about = "Rust implementation baseline for bub/OpenClaw")]
+#[command(
+    name = "crabclaw",
+    about = "Rust implementation baseline for bub/OpenClaw"
+)]
 pub struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -76,11 +81,11 @@ fn run_command(args: RunArgs) -> Result<()> {
     if args.dry_run {
         let out = DryRunOutput {
             mode: "dry-run".to_string(),
-            profile: config.profile,
+            profile: config.profile.clone(),
             prompt,
             config: DryRunConfig {
-                api_base: config.api_base,
-                model: config.model,
+                api_base: config.api_base.clone(),
+                model: config.model.clone(),
                 api_key_present: !config.api_key.trim().is_empty(),
             },
         };
@@ -88,6 +93,26 @@ fn run_command(args: RunArgs) -> Result<()> {
         return Ok(());
     }
 
-    println!("Request execution pipeline is not implemented yet. Use --dry-run for validation.");
+    // Build a minimal single-turn request.
+    let request = ChatRequest {
+        model: config.model.clone(),
+        messages: vec![Message::user(&prompt)],
+        max_tokens: None,
+    };
+
+    // Execute the request using a one-shot tokio runtime.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| CrabClawError::Network(format!("failed to start runtime: {e}")))?;
+
+    let response = rt.block_on(send_chat_request(&config, &request))?;
+
+    if let Some(content) = response.assistant_content() {
+        println!("{content}");
+    } else {
+        eprintln!("warning: no response content from model");
+    }
+
     Ok(())
 }

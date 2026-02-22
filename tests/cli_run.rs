@@ -5,6 +5,7 @@ use predicates::prelude::*;
 use tempfile::tempdir;
 
 fn base_command() -> Command {
+    #[allow(deprecated)]
     let mut cmd = Command::cargo_bin("crabclaw").expect("binary exists");
     cmd.env_remove("OPENCLAW_API_KEY");
     cmd.env_remove("OPENCLAW_BASE_URL");
@@ -62,7 +63,9 @@ fn run_fails_when_api_key_is_missing() {
     cmd.args(["run", "--prompt", "hello", "--dry-run"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("config error: missing OPENCLAW_API_KEY"));
+        .stderr(predicate::str::contains(
+            "config error: missing OPENCLAW_API_KEY",
+        ));
 }
 
 #[test]
@@ -94,6 +97,8 @@ fn run_honors_profile_and_precedence() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"profile\": \"dev\""))
-        .stdout(predicate::str::contains("\"api_base\": \"https://env-profile.example.com\""))
+        .stdout(predicate::str::contains(
+            "\"api_base\": \"https://env-profile.example.com\"",
+        ))
         .stdout(predicate::str::contains("\"model\": \"cli-model\""));
 }

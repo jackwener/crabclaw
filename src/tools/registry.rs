@@ -100,6 +100,21 @@ pub fn builtin_registry() -> ToolRegistry {
         "Execute a shell command in the workspace directory. Returns stdout, stderr, and exit code.",
         "builtin",
     );
+    registry.register(
+        "file.read",
+        "Read the contents of a file in the workspace. Path is relative to workspace root.",
+        "builtin",
+    );
+    registry.register(
+        "file.write",
+        "Write content to a file in the workspace. Creates parent directories if needed.",
+        "builtin",
+    );
+    registry.register(
+        "file.list",
+        "List the contents of a directory in the workspace. Use empty path for workspace root.",
+        "builtin",
+    );
     registry
 }
 
@@ -117,31 +132,13 @@ pub fn register_skills(registry: &mut ToolRegistry, workspace: &std::path::Path)
 
 /// Generate OpenAI-compatible tool definitions from the registry.
 ///
-/// Each tool is exposed as a function. `shell.exec` gets a `command` parameter;
-/// skill tools get no parameters (the LLM invokes them to inject context).
+/// Tools with parameters get proper JSON schemas; others get empty params.
 pub fn to_tool_definitions(registry: &ToolRegistry) -> Vec<crate::llm::api_types::ToolDefinition> {
     registry
         .list()
         .into_iter()
         .map(|tool| {
-            let parameters = if tool.name == "shell.exec" {
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "command": {
-                            "type": "string",
-                            "description": "The shell command to execute"
-                        }
-                    },
-                    "required": ["command"]
-                })
-            } else {
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                })
-            };
+            let parameters = tool_parameters(&tool.name);
             crate::llm::api_types::ToolDefinition {
                 tool_type: "function".to_string(),
                 function: crate::llm::api_types::FunctionDefinition {
@@ -152,6 +149,61 @@ pub fn to_tool_definitions(registry: &ToolRegistry) -> Vec<crate::llm::api_types
             }
         })
         .collect()
+}
+
+/// Return the JSON schema for a tool's parameters.
+fn tool_parameters(name: &str) -> serde_json::Value {
+    match name {
+        "shell.exec" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The shell command to execute"
+                }
+            },
+            "required": ["command"]
+        }),
+        "file.read" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file relative to the workspace root"
+                }
+            },
+            "required": ["path"]
+        }),
+        "file.write" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file relative to the workspace root"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The content to write to the file"
+                }
+            },
+            "required": ["path", "content"]
+        }),
+        "file.list" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the directory relative to the workspace root. Empty string for root."
+                }
+            },
+            "required": []
+        }),
+        _ => serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        }),
+    }
 }
 
 /// Execute a tool by name and return the result as a string.
@@ -234,6 +286,28 @@ pub fn execute_tool(
                 crate::core::shell::wrap_failure_context(&command, &result)
             }
         }
+        "file.read" => {
+            use crate::tools::file_ops;
+            let path = parse_json_arg(args, "path").unwrap_or_default();
+            if path.is_empty() {
+                return "Error: 'path' argument is required.".to_string();
+            }
+            file_ops::read_file(workspace, &path)
+        }
+        "file.write" => {
+            use crate::tools::file_ops;
+            let path = parse_json_arg(args, "path").unwrap_or_default();
+            let content = parse_json_arg(args, "content").unwrap_or_default();
+            if path.is_empty() {
+                return "Error: 'path' argument is required.".to_string();
+            }
+            file_ops::write_file(workspace, &path, &content)
+        }
+        "file.list" => {
+            use crate::tools::file_ops;
+            let path = parse_json_arg(args, "path").unwrap_or_default();
+            file_ops::list_directory(workspace, &path)
+        }
         _ if name.starts_with("skill.") => {
             // Skill tool: load the skill body and return as context.
             let skill_name = &name["skill.".len()..];
@@ -245,6 +319,13 @@ pub fn execute_tool(
         }
         _ => format!("Unknown tool: {name}"),
     }
+}
+
+/// Helper: parse a string value from a JSON args string.
+fn parse_json_arg(args: &str, key: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(args)
+        .ok()
+        .and_then(|v| v[key].as_str().map(String::from))
 }
 
 #[cfg(test)]

@@ -62,6 +62,50 @@ async fn process_message_routes_to_model_and_returns_reply() {
     assert!(reply.contains("Hello from mock LLM!"));
 }
 
+/// Natural language → Anthropic model call → assistant reply returned to user.
+#[tokio::test]
+async fn process_message_routes_to_anthropic_model_and_returns_reply() {
+    let mut server = mockito::Server::new_async().await;
+
+    let mock = server
+        .mock("POST", "/v1/messages")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+                "content": [{"type": "text", "text": "Hello from Anthropic mock LLM!"}],
+                "stop_reason": "end_turn"
+            }"#,
+        )
+        .create_async()
+        .await;
+
+    let mut config = test_config(&server.url());
+    config.model = "anthropic:test-model".to_string();
+    let workspace = TempDir::new().unwrap();
+
+    let response = process_message(
+        "hi there",
+        &config,
+        workspace.path(),
+        "test:session_anthropic",
+    )
+    .await;
+
+    mock.assert_async().await;
+    assert!(
+        response.error.is_none(),
+        "unexpected error: {:?}",
+        response.error
+    );
+    assert_eq!(
+        response.assistant_output.as_deref(),
+        Some("Hello from Anthropic mock LLM!")
+    );
+    let reply = response.to_reply().unwrap();
+    assert!(reply.contains("Hello from Anthropic mock LLM!"));
+}
+
 /// Comma command → immediate output, no model call.
 #[tokio::test]
 async fn process_message_handles_comma_command() {

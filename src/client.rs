@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tracing::{debug, warn};
 
-use crate::api_types::{ApiErrorBody, ChatRequest, ChatResponse};
+use crate::api_types::{AnthropicRequest, ApiErrorBody, ChatRequest, ChatResponse};
 use crate::config::AppConfig;
 use crate::error::{CrabClawError, Result};
 
@@ -14,79 +14,96 @@ struct NonStandardError {
     success: Option<bool>,
 }
 
-const DEFAULT_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_TIMEOUT_SECS: u64 = 60;
 
-/// Response from the /models endpoint.
-#[derive(Debug, serde::Deserialize)]
-struct ModelsResponse {
-    #[serde(default)]
-    data: Vec<ModelEntry>,
+/// Send a chat completion request, automatically choosing the provider SDK
+/// based on the model prefix (`provider:model`).
+pub async fn send_chat_request(config: &AppConfig, request: &ChatRequest) -> Result<ChatResponse> {
+    if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {
+        send_anthropic_request(config, request, anthropic_model).await
+    } else {
+        // Assume OpenAI compatible by default
+        send_openai_request(config, request).await
+    }
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct ModelEntry {
-    id: String,
-}
+async fn send_anthropic_request(
+    config: &AppConfig,
+    request: &ChatRequest,
+    model: &str,
+) -> Result<ChatResponse> {
+    let url = format!("{}/v1/messages", config.api_base.trim_end_matches('/'));
+    debug!(url = %url, model = %model, "sending anthropic chat request");
 
-/// Validate that the configured model exists by calling the /models endpoint.
-/// Returns Ok(()) if validation passes or if the endpoint is unavailable (best-effort).
-pub async fn validate_model(config: &AppConfig) -> Result<()> {
-    let url = format!("{}/models", config.api_base.trim_end_matches('/'));
-    debug!(url = %url, model = %config.model, "validating model");
+    let mut system_text = String::new();
+    let mut messages = Vec::new();
+
+    for msg in &request.messages {
+        if msg.role == "system" {
+            if !system_text.is_empty() {
+                system_text.push('\n');
+            }
+            system_text.push_str(&msg.content);
+        } else {
+            messages.push(msg.clone());
+        }
+    }
+
+    let anth_req = AnthropicRequest {
+        model: model.to_string(),
+        messages,
+        max_tokens: request.max_tokens.unwrap_or(4096),
+        system: if system_text.is_empty() {
+            None
+        } else {
+            Some(system_text)
+        },
+    };
 
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         .build()
         .map_err(|e| CrabClawError::Network(format!("failed to build HTTP client: {e}")))?;
 
-    let response = match client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", config.api_key))
+    let response = client
+        .post(&url)
+        .header("x-api-key", &config.api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("Content-Type", "application/json")
+        .json(&anth_req)
         .send()
         .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("model validation skipped: {e}");
-            return Ok(()); // Best-effort: don't block if /models is unavailable
-        }
-    };
+        .map_err(|e| {
+            if e.is_timeout() {
+                CrabClawError::Network(format!("request timed out after {DEFAULT_TIMEOUT_SECS}s"))
+            } else if e.is_connect() {
+                CrabClawError::Network(format!("connection failed: {e}"))
+            } else {
+                CrabClawError::Network(format!("request failed: {e}"))
+            }
+        })?;
 
-    if !response.status().is_success() {
-        warn!(status = %response.status(), "model validation skipped: /models returned non-200");
-        return Ok(());
+    let status = response.status();
+    debug!(status = %status, "received anthropic response");
+
+    let body = response
+        .text()
+        .await
+        .map_err(|e| CrabClawError::Network(format!("failed to read response body: {e}")))?;
+
+    debug!(body = %body, "raw response body");
+
+    if status.is_success() {
+        let anth_resp: crate::api_types::AnthropicResponse = serde_json::from_str(&body)?;
+        return Ok(anth_resp.into_chat_response());
     }
 
-    let body = response.text().await.unwrap_or_default();
-    let models: ModelsResponse = match serde_json::from_str(&body) {
-        Ok(m) => m,
-        Err(_) => {
-            warn!("model validation skipped: could not parse /models response");
-            return Ok(());
-        }
-    };
-
-    if models.data.is_empty() {
-        return Ok(()); // No model list available
-    }
-
-    let available: Vec<&str> = models.data.iter().map(|m| m.id.as_str()).collect();
-    if !available.contains(&config.model.as_str()) {
-        return Err(CrabClawError::Config(format!(
-            "model '{}' not found. Available models: {}",
-            config.model,
-            available.join(", ")
-        )));
-    }
-
-    debug!(model = %config.model, "model validation passed");
-    Ok(())
+    handle_error_response(status, &body)
 }
 
-/// Send a chat completion request to an OpenAI-compatible endpoint.
-pub async fn send_chat_request(config: &AppConfig, request: &ChatRequest) -> Result<ChatResponse> {
+async fn send_openai_request(config: &AppConfig, request: &ChatRequest) -> Result<ChatResponse> {
     let url = format!("{}/chat/completions", config.api_base.trim_end_matches('/'));
-    debug!(url = %url, model = %request.model, "sending chat request");
+    debug!(url = %url, model = %request.model, "sending openai chat request");
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
@@ -111,17 +128,15 @@ pub async fn send_chat_request(config: &AppConfig, request: &ChatRequest) -> Res
         })?;
 
     let status = response.status();
-    debug!(status = %status, "received response");
+    debug!(status = %status, "received openai response");
+
+    let body = response
+        .text()
+        .await
+        .map_err(|e| CrabClawError::Network(format!("failed to read response body: {e}")))?;
+    debug!(body = %body, "raw response body");
 
     if status.is_success() {
-        let body = response
-            .text()
-            .await
-            .map_err(|e| CrabClawError::Network(format!("failed to read response body: {e}")))?;
-        debug!(body = %body, "raw response body");
-
-        // Detect non-standard error responses (HTTP 200 but body is an error).
-        // Some providers (e.g. GLM) return {"code":500,"msg":"...","success":false}.
         if let Ok(ns_err) = serde_json::from_str::<NonStandardError>(&body) {
             if ns_err.success == Some(false) || ns_err.code.is_some_and(|c| c >= 400) {
                 let msg = ns_err
@@ -139,13 +154,15 @@ pub async fn send_chat_request(config: &AppConfig, request: &ChatRequest) -> Res
         return Ok(chat_response);
     }
 
-    // Try to parse the error body for a structured message.
-    let body_text = response.text().await.unwrap_or_default();
-    let detail = serde_json::from_str::<ApiErrorBody>(&body_text)
+    handle_error_response(status, &body)
+}
+
+fn handle_error_response(status: reqwest::StatusCode, body_text: &str) -> Result<ChatResponse> {
+    let detail = serde_json::from_str::<ApiErrorBody>(body_text)
         .ok()
         .and_then(|b| b.error)
         .map(|e| e.message)
-        .unwrap_or_else(|| body_text.clone());
+        .unwrap_or_else(|| body_text.to_string());
 
     match status.as_u16() {
         401 | 403 => {

@@ -214,9 +214,6 @@ fn serve_command(args: ServeArgs) -> Result<()> {
         .map_err(|e| CrabClawError::Network(format!("failed to start runtime: {e}")))?;
 
     rt.block_on(async {
-        // Validate model exists before starting channels.
-        crate::client::validate_model(&config).await?;
-
         let mut manager =
             crate::channel_manager::ChannelManager::new(Arc::clone(&config), &workspace);
         manager.run().await

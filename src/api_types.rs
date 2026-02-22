@@ -87,6 +87,87 @@ pub struct ApiErrorDetail {
     pub code: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Anthropic API types (POST /v1/messages)
+// ---------------------------------------------------------------------------
+
+/// Request body for the Anthropic messages endpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnthropicRequest {
+    pub model: String,
+    pub messages: Vec<Message>,
+    pub max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
+}
+
+/// A single content block in an Anthropic response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AnthropicContentBlock {
+    #[serde(rename = "type")]
+    pub block_type: String,
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+/// Response body from the Anthropic messages endpoint.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AnthropicResponse {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub content: Vec<AnthropicContentBlock>,
+    pub stop_reason: Option<String>,
+    pub usage: Option<AnthropicUsage>,
+}
+
+/// Anthropic token usage.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AnthropicUsage {
+    #[serde(default)]
+    pub input_tokens: u32,
+    #[serde(default)]
+    pub output_tokens: u32,
+}
+
+impl AnthropicResponse {
+    /// Convert to unified ChatResponse for downstream processing.
+    pub fn into_chat_response(self) -> ChatResponse {
+        let text: String = self
+            .content
+            .iter()
+            .filter(|b| b.block_type == "text")
+            .filter_map(|b| b.text.as_deref())
+            .collect::<Vec<_>>()
+            .join("");
+
+        let choices = if text.is_empty() {
+            vec![]
+        } else {
+            vec![Choice {
+                index: 0,
+                message: Message {
+                    role: "assistant".to_string(),
+                    content: text,
+                },
+                finish_reason: self.stop_reason,
+            }]
+        };
+
+        let usage = self.usage.map(|u| Usage {
+            prompt_tokens: u.input_tokens,
+            completion_tokens: u.output_tokens,
+            total_tokens: u.input_tokens + u.output_tokens,
+        });
+
+        ChatResponse {
+            id: self.id,
+            choices,
+            usage,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

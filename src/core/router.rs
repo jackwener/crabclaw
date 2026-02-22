@@ -168,6 +168,103 @@ fn execute_internal(
         },
         "tape.info" | "tape" => execute_tape_info(tape),
         "tape.reset" => execute_tape_reset(tape, args.has_flag("archive")),
+        "tape.search" => {
+            let query = args.positional.join(" ");
+            if query.is_empty() {
+                return CommandResult {
+                    success: false,
+                    output: "Usage: ,tape.search <query>".to_string(),
+                    exit_requested: false,
+                };
+            }
+            let results = tape.search(&query);
+            if results.is_empty() {
+                CommandResult {
+                    success: true,
+                    output: format!("No entries matching '{query}'."),
+                    exit_requested: false,
+                }
+            } else {
+                let lines: Vec<String> = results
+                    .iter()
+                    .map(|e| {
+                        let preview = serde_json::to_string(&e.payload)
+                            .unwrap_or_default()
+                            .chars()
+                            .take(80)
+                            .collect::<String>();
+                        format!("  [{}] {} #{}: {}", e.timestamp, e.kind, e.id, preview)
+                    })
+                    .collect();
+                CommandResult {
+                    success: true,
+                    output: format!(
+                        "Found {} match(es) for '{query}':\n{}",
+                        results.len(),
+                        lines.join("\n")
+                    ),
+                    exit_requested: false,
+                }
+            }
+        }
+        "anchors" => {
+            let anchors = tape.anchor_entries();
+            if anchors.is_empty() {
+                CommandResult {
+                    success: true,
+                    output: "No anchors in tape.".to_string(),
+                    exit_requested: false,
+                }
+            } else {
+                let lines: Vec<String> = anchors
+                    .iter()
+                    .map(|a| {
+                        let name = a
+                            .payload
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("unnamed");
+                        format!("  #{} [{}] {}", a.id, a.timestamp, name)
+                    })
+                    .collect();
+                CommandResult {
+                    success: true,
+                    output: format!("Anchors ({}):\n{}", anchors.len(), lines.join("\n")),
+                    exit_requested: false,
+                }
+            }
+        }
+        "handoff" => {
+            let anchor_name = if args.positional.is_empty() {
+                "handoff".to_string()
+            } else {
+                args.positional.join(" ")
+            };
+            let info = tape.info();
+            match tape.anchor(
+                &anchor_name,
+                serde_json::json!({
+                    "owner": "human",
+                    "type": "handoff",
+                    "entries_before": info.entries,
+                    "previous_anchor": info.last_anchor,
+                }),
+            ) {
+                Ok(_) => CommandResult {
+                    success: true,
+                    output: format!(
+                        "Handoff anchor '{}' created. Context window reset ({} entries before).",
+                        anchor_name, info.entries
+                    ),
+                    exit_requested: false,
+                },
+                Err(e) => CommandResult {
+                    success: false,
+                    output: format!("Failed to create anchor: {e}"),
+                    exit_requested: false,
+                },
+            }
+        }
         "tools" => execute_tools(registry),
         "skills" => execute_skills(workspace),
         "skills.describe" => execute_skills_describe(args, workspace),
@@ -180,15 +277,24 @@ fn execute_internal(
 }
 
 fn execute_help() -> CommandResult {
-    let registry = builtin_registry();
-    let rows = registry.compact_rows();
-    let mut lines = vec!["Available commands:".to_string()];
-    for row in rows {
-        lines.push(format!("  ,{row}"));
-    }
+    let help = "\
+Available commands:
+  ,help               — Show this help
+  ,quit               — Exit the session
+  ,tape               — Show tape session info
+  ,tape.info          — Show tape session info (alias)
+  ,tape.reset         — Reset the tape (--archive to keep backup)
+  ,tape.search <q>    — Search tape entries by content
+  ,anchors            — List all anchors in the tape
+  ,handoff [name]     — Create a handoff anchor (resets context window)
+  ,tools              — List all registered tools
+  ,skills             — List discovered skills
+  ,skills.describe <n>— Show full body of a skill
+  ,<shell command>    — Execute a shell command (e.g. ,ls, ,git status)";
+
     CommandResult {
         success: true,
-        output: lines.join("\n"),
+        output: help.to_string(),
         exit_requested: false,
     }
 }
@@ -495,5 +601,56 @@ mod tests {
         // Falls back to model on error
         assert!(result.enter_model);
         assert!(result.model_prompt.contains("skill not found"));
+    }
+
+    #[test]
+    fn tape_search_finds_messages() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        tape.append_message("user", "hello world").unwrap();
+        tape.append_message("assistant", "greetings").unwrap();
+
+        let result = route_user(",tape.search world", &mut tape, ws.path());
+        assert!(!result.enter_model);
+        assert!(result.immediate_output.contains("1 match"));
+    }
+
+    #[test]
+    fn tape_search_no_query_shows_usage() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_user(",tape.search", &mut tape, ws.path());
+        // Missing query is a failed command → model gets context
+        assert!(result.enter_model);
+        assert!(result.model_prompt.contains("Usage"));
+    }
+
+    #[test]
+    fn anchors_command_lists_anchors() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        tape.anchor("test-anchor", serde_json::json!({})).unwrap();
+
+        let result = route_user(",anchors", &mut tape, ws.path());
+        assert!(!result.enter_model);
+        assert!(result.immediate_output.contains("test-anchor"));
+        assert!(result.immediate_output.contains("Anchors ("));
+    }
+
+    #[test]
+    fn handoff_creates_anchor() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        tape.append_message("user", "old msg").unwrap();
+
+        let result = route_user(",handoff checkpoint-1", &mut tape, ws.path());
+        assert!(!result.enter_model);
+        assert!(result.immediate_output.contains("checkpoint-1"));
+        assert!(result.immediate_output.contains("created"));
+
+        // Verify anchor was actually created
+        let anchors = tape.anchor_entries();
+        let last = anchors.last().unwrap();
+        assert_eq!(last.payload["name"], "checkpoint-1");
     }
 }

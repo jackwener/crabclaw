@@ -4,6 +4,7 @@ use crate::tape::store::TapeStore;
 /// Build a list of messages from tape entries for multi-turn conversation.
 ///
 /// Aligned with bub's `tape/context.py::_select_messages`:
+/// - Only includes entries since the last anchor (context truncation)
 /// - Extracts entries with kind "message"
 /// - Preserves role and content from payload
 /// - Optionally prepends a system prompt
@@ -16,7 +17,8 @@ pub fn build_messages(tape: &TapeStore, system_prompt: Option<&str>) -> Vec<Mess
         }
     }
 
-    for entry in tape.entries() {
+    // Use entries since last anchor for context truncation
+    for entry in tape.entries_since_last_anchor() {
         if entry.kind != "message" {
             continue;
         }
@@ -139,5 +141,29 @@ mod tests {
         let msgs = build_messages(&tape, None);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "real");
+    }
+
+    #[test]
+    fn anchor_truncates_context_window() {
+        let dir = tempdir().unwrap();
+        let mut tape = TapeStore::open(dir.path(), "ctx-trunc").unwrap();
+
+        // Old context (before anchor)
+        tape.append_message("user", "old question").unwrap();
+        tape.append_message("assistant", "old answer").unwrap();
+
+        // Create anchor
+        tape.anchor("handoff", serde_json::json!({"owner": "human"}))
+            .unwrap();
+
+        // New context (after anchor)
+        tape.append_message("user", "new question").unwrap();
+        tape.append_message("assistant", "new answer").unwrap();
+
+        let msgs = build_messages(&tape, None);
+        // Only new messages should be in context
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].content, "new question");
+        assert_eq!(msgs[1].content, "new answer");
     }
 }

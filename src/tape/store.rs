@@ -115,6 +115,37 @@ impl TapeStore {
         }
     }
 
+    /// Search entries by content substring (case-insensitive).
+    ///
+    /// Looks through message content, event payloads, and anchor names.
+    pub fn search(&self, query: &str) -> Vec<&TapeEntry> {
+        let lower = query.to_lowercase();
+        self.entries
+            .iter()
+            .filter(|e| {
+                let payload_str = serde_json::to_string(&e.payload).unwrap_or_default();
+                payload_str.to_lowercase().contains(&lower)
+            })
+            .collect()
+    }
+
+    /// Return all anchor entries.
+    pub fn anchor_entries(&self) -> Vec<&TapeEntry> {
+        self.entries.iter().filter(|e| e.kind == "anchor").collect()
+    }
+
+    /// Return entries since (and including) the last anchor.
+    ///
+    /// If no anchors exist, returns all entries.
+    pub fn entries_since_last_anchor(&self) -> &[TapeEntry] {
+        let last_anchor_idx = self.entries.iter().rposition(|e| e.kind == "anchor");
+
+        match last_anchor_idx {
+            Some(idx) => &self.entries[idx..],
+            None => &self.entries,
+        }
+    }
+
     /// Reset the tape, optionally archiving the old data.
     pub fn reset(&mut self, archive: bool) -> std::io::Result<Option<PathBuf>> {
         let archive_path = if archive && self.path.exists() {
@@ -359,5 +390,79 @@ mod tests {
         let mut tape = TapeStore::open(dir.path(), "idtest").unwrap();
         tape.append_message("user", "three").unwrap();
         assert_eq!(tape.entries().last().unwrap().id, 3);
+    }
+
+    #[test]
+    fn search_finds_matching_entries() {
+        let dir = tempdir().unwrap();
+        let mut tape = TapeStore::open(dir.path(), "search").unwrap();
+        tape.append_message("user", "hello world").unwrap();
+        tape.append_message("assistant", "greetings").unwrap();
+        tape.append_message("user", "goodbye world").unwrap();
+
+        let results = tape.search("world");
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn search_case_insensitive() {
+        let dir = tempdir().unwrap();
+        let mut tape = TapeStore::open(dir.path(), "search-ci").unwrap();
+        tape.append_message("user", "Hello World").unwrap();
+
+        let results = tape.search("hello");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn search_no_match() {
+        let dir = tempdir().unwrap();
+        let mut tape = TapeStore::open(dir.path(), "search-none").unwrap();
+        tape.append_message("user", "hello").unwrap();
+
+        let results = tape.search("xyz123");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn anchor_entries_returns_only_anchors() {
+        let dir = tempdir().unwrap();
+        let mut tape = TapeStore::open(dir.path(), "anchors").unwrap();
+
+        tape.anchor("start", serde_json::json!({})).unwrap();
+        tape.append_message("user", "msg").unwrap();
+        tape.anchor("mid", serde_json::json!({})).unwrap();
+
+        let anchors = tape.anchor_entries();
+        assert_eq!(anchors.len(), 2);
+        assert_eq!(anchors[0].payload["name"], "start");
+        assert_eq!(anchors[1].payload["name"], "mid");
+    }
+
+    #[test]
+    fn entries_since_last_anchor_truncates() {
+        let dir = tempdir().unwrap();
+        let mut tape = TapeStore::open(dir.path(), "trunc").unwrap();
+
+        tape.append_message("user", "old").unwrap();
+        tape.append_message("assistant", "old reply").unwrap();
+        tape.anchor("handoff", serde_json::json!({})).unwrap();
+        tape.append_message("user", "new").unwrap();
+        tape.append_message("assistant", "new reply").unwrap();
+
+        let since = tape.entries_since_last_anchor();
+        // Should include anchor + 2 messages = 3 entries
+        assert_eq!(since.len(), 3);
+        assert_eq!(since[0].kind, "anchor");
+    }
+
+    #[test]
+    fn entries_since_last_anchor_no_anchors() {
+        let dir = tempdir().unwrap();
+        let mut tape = TapeStore::open(dir.path(), "no-anchor").unwrap();
+        tape.append_message("user", "msg").unwrap();
+
+        let since = tape.entries_since_last_anchor();
+        assert_eq!(since.len(), 1);
     }
 }

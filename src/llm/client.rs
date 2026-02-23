@@ -4,7 +4,11 @@ use tracing::{debug, warn};
 
 use crate::core::config::AppConfig;
 use crate::core::error::{CrabClawError, Result};
-use crate::llm::api_types::{AnthropicRequest, ApiErrorBody, ChatRequest, ChatResponse};
+use crate::llm::api_types::{
+    AnthropicRequest, ApiErrorBody, ChatRequest, ChatResponse, StreamChunk,
+};
+use futures_util::StreamExt;
+use tokio::sync::mpsc;
 
 /// Non-standard error response (e.g. GLM returns HTTP 200 with error JSON).
 #[derive(Debug, serde::Deserialize)]
@@ -24,6 +28,18 @@ pub async fn send_chat_request(config: &AppConfig, request: &ChatRequest) -> Res
     } else {
         // Assume OpenAI compatible by default
         send_openai_request(config, request).await
+    }
+}
+
+/// Send a chat completion request as a stream.
+pub async fn send_chat_request_stream(
+    config: &AppConfig,
+    request: &ChatRequest,
+) -> Result<mpsc::UnboundedReceiver<Result<StreamChunk>>> {
+    if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {
+        send_anthropic_request_stream(config, request, anthropic_model).await
+    } else {
+        send_openai_request_stream(config, request).await
     }
 }
 
@@ -101,6 +117,181 @@ async fn send_anthropic_request(
     handle_error_response(status, &body)
 }
 
+async fn send_anthropic_request_stream(
+    config: &AppConfig,
+    request: &ChatRequest,
+    model: &str,
+) -> Result<mpsc::UnboundedReceiver<Result<StreamChunk>>> {
+    let url = format!("{}/v1/messages", config.api_base.trim_end_matches('/'));
+    debug!(url = %url, model = %model, "sending anthropic chat streaming request");
+
+    let mut system_text = String::new();
+    let mut messages = Vec::new();
+
+    for msg in &request.messages {
+        if msg.role == "system" {
+            if !system_text.is_empty() {
+                system_text.push('\n');
+            }
+            system_text.push_str(&msg.content);
+        } else {
+            messages.push(msg.clone());
+        }
+    }
+
+    let anth_req = AnthropicRequest {
+        model: model.to_string(),
+        messages,
+        max_tokens: request.max_tokens.unwrap_or(4096),
+        system: if system_text.is_empty() {
+            None
+        } else {
+            Some(system_text)
+        },
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| CrabClawError::Network(format!("failed to build HTTP client: {e}")))?;
+
+    let mut json_val = serde_json::to_value(&anth_req).map_err(CrabClawError::from)?;
+    if let Some(obj) = json_val.as_object_mut() {
+        obj.insert("stream".to_string(), serde_json::Value::Bool(true));
+    }
+
+    let response = client
+        .post(&url)
+        .header("x-api-key", &config.api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("Content-Type", "application/json")
+        .json(&json_val)
+        .send()
+        .await
+        .map_err(|e| {
+            if e.is_timeout() {
+                CrabClawError::Network(format!("request timed out after {DEFAULT_TIMEOUT_SECS}s"))
+            } else if e.is_connect() {
+                CrabClawError::Network(format!("connection failed: {e}"))
+            } else {
+                CrabClawError::Network(format!("request failed: {e}"))
+            }
+        })?;
+
+    let status = response.status();
+    debug!(status = %status, "received anthropic stream response headers");
+
+    if !status.is_success() {
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Failed to read error body".to_string());
+        return Err(handle_error_response(status, &body).unwrap_err());
+    }
+
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    tokio::spawn(async move {
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+
+        use crate::llm::api_types::{
+            AnthropicStreamBlock, AnthropicStreamDelta, AnthropicStreamEvent,
+        };
+
+        while let Some(chunk_res) = stream.next().await {
+            match chunk_res {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    buffer.push_str(&text);
+
+                    while let Some(pos) = buffer.find("\n\n") {
+                        let event_str = buffer[..pos].to_string();
+                        buffer.drain(..pos + 2);
+
+                        // Anthropic sends:
+                        // event: message_start
+                        // data: {"type": ...}
+                        // We can just look for "data: " and parse it.
+                        for line in event_str.lines() {
+                            let line = line.trim();
+                            if let Some(data) = line.strip_prefix("data: ") {
+                                let data = data.trim();
+                                if data == "[DONE]" {
+                                    continue; // Anthropic usually doesn't send this, but just in case
+                                }
+
+                                match serde_json::from_str::<AnthropicStreamEvent>(data) {
+                                    Ok(event) => match event {
+                                        AnthropicStreamEvent::ContentBlockStart {
+                                            index,
+                                            content_block,
+                                        } => match content_block {
+                                            AnthropicStreamBlock::Text { text } => {
+                                                if !text.is_empty() {
+                                                    let _ = tx.send(Ok(StreamChunk::Content(text)));
+                                                }
+                                            }
+                                            AnthropicStreamBlock::ToolUse { id, name } => {
+                                                let _ = tx.send(Ok(StreamChunk::ToolCallStart {
+                                                    index,
+                                                    id,
+                                                    name,
+                                                }));
+                                            }
+                                        },
+                                        AnthropicStreamEvent::ContentBlockDelta {
+                                            index,
+                                            delta,
+                                        } => match delta {
+                                            AnthropicStreamDelta::TextDelta { text } => {
+                                                if !text.is_empty() {
+                                                    let _ = tx.send(Ok(StreamChunk::Content(text)));
+                                                }
+                                            }
+                                            AnthropicStreamDelta::InputJsonDelta {
+                                                partial_json,
+                                            } => {
+                                                let _ =
+                                                    tx.send(Ok(StreamChunk::ToolCallArgument {
+                                                        index,
+                                                        text: partial_json,
+                                                    }));
+                                            }
+                                        },
+                                        AnthropicStreamEvent::MessageStop => {
+                                            let _ = tx.send(Ok(StreamChunk::Done));
+                                            return;
+                                        }
+                                        AnthropicStreamEvent::Error { error } => {
+                                            let _ = tx.send(Err(CrabClawError::Api(format!(
+                                                "anthropic stream error: {}",
+                                                error.message
+                                            ))));
+                                            return;
+                                        }
+                                        _ => {} // Ignore MessageStart, Ping, etc.
+                                    },
+                                    Err(e) => {
+                                        debug!(error = %e, data = %data, "failed to parse anthropic SSE chunk");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(CrabClawError::Network(format!("stream error: {e}"))));
+                    return;
+                }
+            }
+        }
+        let _ = tx.send(Ok(StreamChunk::Done));
+    });
+
+    Ok(rx)
+}
+
 async fn send_openai_request(config: &AppConfig, request: &ChatRequest) -> Result<ChatResponse> {
     let url = format!("{}/chat/completions", config.api_base.trim_end_matches('/'));
     debug!(url = %url, model = %request.model, "sending openai chat request");
@@ -156,6 +347,145 @@ async fn send_openai_request(config: &AppConfig, request: &ChatRequest) -> Resul
     }
 
     handle_error_response(status, &body)
+}
+
+async fn send_openai_request_stream(
+    config: &AppConfig,
+    request: &ChatRequest,
+) -> Result<mpsc::UnboundedReceiver<Result<StreamChunk>>> {
+    let url = format!("{}/chat/completions", config.api_base.trim_end_matches('/'));
+    debug!(url = %url, model = %request.model, "sending openai chat streaming request");
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| CrabClawError::Network(format!("failed to build HTTP client: {e}")))?;
+
+    // We must pass string raw json to inject "stream": true if not present in ChatRequest.
+    // Let's just serialize it and inject.
+    let mut json_val = serde_json::to_value(request).map_err(CrabClawError::from)?;
+    if let Some(obj) = json_val.as_object_mut() {
+        obj.insert("stream".to_string(), serde_json::Value::Bool(true));
+    }
+
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", config.api_key))
+        .header("Content-Type", "application/json")
+        .json(&json_val)
+        .send()
+        .await
+        .map_err(|e| {
+            if e.is_timeout() {
+                CrabClawError::Network(format!("request timed out after {DEFAULT_TIMEOUT_SECS}s"))
+            } else if e.is_connect() {
+                CrabClawError::Network(format!("connection failed: {e}"))
+            } else {
+                CrabClawError::Network(format!("request failed: {e}"))
+            }
+        })?;
+
+    let status = response.status();
+    debug!(status = %status, "received openai stream response headers");
+
+    if !status.is_success() {
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Failed to read error body".to_string());
+        return Err(handle_error_response(status, &body).unwrap_err());
+    }
+
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    tokio::spawn(async move {
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+
+        while let Some(chunk_res) = stream.next().await {
+            match chunk_res {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    buffer.push_str(&text);
+
+                    // Process double-newline separated SSE events
+                    while let Some(pos) = buffer.find("\n\n") {
+                        let event = buffer[..pos].to_string();
+                        buffer.drain(..pos + 2);
+
+                        for line in event.lines() {
+                            let line = line.trim();
+                            if line.is_empty() {
+                                continue;
+                            }
+                            if let Some(data) = line.strip_prefix("data: ") {
+                                let data = data.trim();
+                                if data == "[DONE]" {
+                                    let _ = tx.send(Ok(StreamChunk::Done));
+                                    return;
+                                }
+
+                                match serde_json::from_str::<crate::llm::api_types::ChatStreamChunk>(
+                                    data,
+                                ) {
+                                    Ok(parsed) => {
+                                        if let Some(choice) = parsed.choices.first() {
+                                            if let Some(content) = &choice.delta.content {
+                                                if !content.is_empty() {
+                                                    let _ = tx.send(Ok(StreamChunk::Content(
+                                                        content.clone(),
+                                                    )));
+                                                }
+                                            }
+                                            if let Some(tool_calls) = &choice.delta.tool_calls {
+                                                for tc in tool_calls {
+                                                    if let Some(id) = &tc.id {
+                                                        // It's the start of a tool call
+                                                        if let Some(func) = &tc.function {
+                                                            if let Some(name) = &func.name {
+                                                                let _ = tx.send(Ok(
+                                                                    StreamChunk::ToolCallStart {
+                                                                        index: tc.index,
+                                                                        id: id.clone(),
+                                                                        name: name.clone(),
+                                                                    },
+                                                                ));
+                                                            }
+                                                        }
+                                                    }
+                                                    if let Some(func) = &tc.function {
+                                                        if let Some(args) = &func.arguments {
+                                                            let _ = tx.send(Ok(
+                                                                StreamChunk::ToolCallArgument {
+                                                                    index: tc.index,
+                                                                    text: args.clone(),
+                                                                },
+                                                            ));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        // Some providers send weird pings or format differently, optionally warn
+                                        debug!(error = %e, data = %data, "failed to parse SSE chunk");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(CrabClawError::Network(format!("stream error: {e}"))));
+                    return;
+                }
+            }
+        }
+        let _ = tx.send(Ok(StreamChunk::Done));
+    });
+
+    Ok(rx)
 }
 
 fn handle_error_response(status: reqwest::StatusCode, body_text: &str) -> Result<ChatResponse> {

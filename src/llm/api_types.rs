@@ -194,6 +194,60 @@ pub struct ApiErrorDetail {
 }
 
 // ---------------------------------------------------------------------------
+// Streaming types (Unified + OpenAI)
+// ---------------------------------------------------------------------------
+
+/// Unified stream chunk for cross-provider streaming (OpenAI & Anthropic)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamChunk {
+    /// Incremental text output
+    Content(String),
+    /// A tool call started: name and ID provided
+    ToolCallStart {
+        index: usize,
+        id: String,
+        name: String,
+    },
+    /// A chunk of JSON arguments for an ongoing tool call
+    ToolCallArgument { index: usize, text: String },
+    /// The stream has finished normally
+    Done,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChatStreamChunk {
+    #[serde(default)]
+    pub choices: Vec<StreamChoice>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamChoice {
+    #[serde(default)]
+    pub index: u32,
+    pub delta: StreamDelta,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamDelta {
+    pub content: Option<String>,
+    pub tool_calls: Option<Vec<StreamToolCall>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamToolCall {
+    pub index: usize,
+    pub id: Option<String>,
+    pub function: Option<StreamToolCallFunction>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamToolCallFunction {
+    pub name: Option<String>,
+    pub arguments: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Anthropic API types (POST /v1/messages)
 // ---------------------------------------------------------------------------
 
@@ -234,6 +288,72 @@ pub struct AnthropicUsage {
     pub input_tokens: u32,
     #[serde(default)]
     pub output_tokens: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type")]
+pub enum AnthropicStreamEvent {
+    #[serde(rename = "message_start")]
+    MessageStart { message: AnthropicStreamMessage },
+    #[serde(rename = "content_block_start")]
+    ContentBlockStart {
+        index: usize,
+        content_block: AnthropicStreamBlock,
+    },
+    #[serde(rename = "content_block_delta")]
+    ContentBlockDelta {
+        index: usize,
+        delta: AnthropicStreamDelta,
+    },
+    #[serde(rename = "content_block_stop")]
+    ContentBlockStop { index: usize },
+    #[serde(rename = "message_delta")]
+    MessageDelta {
+        delta: AnthropicMessageDelta,
+        usage: AnthropicUsage,
+    },
+    #[serde(rename = "message_stop")]
+    MessageStop,
+    #[serde(rename = "ping")]
+    Ping,
+    #[serde(rename = "error")]
+    Error { error: AnthropicStreamError },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AnthropicStreamMessage {
+    pub id: String,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type")]
+pub enum AnthropicStreamBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse { id: String, name: String },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type")]
+pub enum AnthropicStreamDelta {
+    #[serde(rename = "text_delta")]
+    TextDelta { text: String },
+    #[serde(rename = "input_json_delta")]
+    InputJsonDelta { partial_json: String },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AnthropicMessageDelta {
+    pub stop_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AnthropicStreamError {
+    #[serde(rename = "type")]
+    pub error_type: String,
+    pub message: String,
 }
 
 impl AnthropicResponse {

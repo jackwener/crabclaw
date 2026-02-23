@@ -65,6 +65,12 @@ async fn send_anthropic_request(
         }
     }
 
+    let tools = request.tools.as_ref().map(|ts| {
+        ts.iter()
+            .map(crate::llm::api_types::AnthropicToolDefinition::from)
+            .collect::<Vec<_>>()
+    });
+
     let anth_req = AnthropicRequest {
         model: model.to_string(),
         messages,
@@ -74,6 +80,7 @@ async fn send_anthropic_request(
         } else {
             Some(system_text)
         },
+        tools,
     };
 
     let client = reqwest::Client::builder()
@@ -139,6 +146,12 @@ async fn send_anthropic_request_stream(
         }
     }
 
+    let tools = request.tools.as_ref().map(|ts| {
+        ts.iter()
+            .map(crate::llm::api_types::AnthropicToolDefinition::from)
+            .collect::<Vec<_>>()
+    });
+
     let anth_req = AnthropicRequest {
         model: model.to_string(),
         messages,
@@ -148,6 +161,7 @@ async fn send_anthropic_request_stream(
         } else {
             Some(system_text)
         },
+        tools,
     };
 
     let client = reqwest::Client::builder()

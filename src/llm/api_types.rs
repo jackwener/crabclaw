@@ -251,6 +251,23 @@ pub struct StreamToolCallFunction {
 // Anthropic API types (POST /v1/messages)
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AnthropicToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+impl From<&ToolDefinition> for AnthropicToolDefinition {
+    fn from(tool: &ToolDefinition) -> Self {
+        Self {
+            name: tool.function.name.clone(),
+            description: tool.function.description.clone(),
+            input_schema: tool.function.parameters.clone(),
+        }
+    }
+}
+
 /// Request body for the Anthropic messages endpoint.
 #[derive(Debug, Clone, Serialize)]
 pub struct AnthropicRequest {
@@ -259,6 +276,8 @@ pub struct AnthropicRequest {
     pub max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<AnthropicToolDefinition>>,
 }
 
 /// A single content block in an Anthropic response.
@@ -268,6 +287,12 @@ pub struct AnthropicContentBlock {
     pub block_type: String,
     #[serde(default)]
     pub text: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub input: Option<serde_json::Value>,
 }
 
 /// Response body from the Anthropic messages endpoint.
@@ -367,17 +392,41 @@ impl AnthropicResponse {
             .collect::<Vec<_>>()
             .join("");
 
-        let choices = if text.is_empty() {
+        let mut tool_calls = Vec::new();
+        for block in &self.content {
+            if block.block_type == "tool_use" {
+                if let (Some(id), Some(name), Some(input)) = (&block.id, &block.name, &block.input)
+                {
+                    let arguments = serde_json::to_string(input).unwrap_or_default();
+                    tool_calls.push(ToolCall {
+                        id: id.clone(),
+                        call_type: "function".to_string(),
+                        function: ToolCallFunction {
+                            name: name.clone(),
+                            arguments,
+                        },
+                    });
+                }
+            }
+        }
+
+        let mut message = Message {
+            role: "assistant".to_string(),
+            content: text,
+            tool_calls: None,
+            tool_call_id: None,
+        };
+
+        if !tool_calls.is_empty() {
+            message.tool_calls = Some(tool_calls);
+        }
+
+        let choices = if message.content.is_empty() && message.tool_calls.is_none() {
             vec![]
         } else {
             vec![Choice {
                 index: 0,
-                message: Message {
-                    role: "assistant".to_string(),
-                    content: text,
-                    tool_calls: None,
-                    tool_call_id: None,
-                },
+                message,
                 finish_reason: self.stop_reason,
             }]
         };

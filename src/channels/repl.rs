@@ -9,7 +9,6 @@ use crate::core::context::build_messages;
 use crate::core::error::{CrabClawError, Result};
 use crate::core::router::route_user;
 use crate::llm::api_types::ChatRequest;
-use crate::llm::client::send_chat_request;
 use crate::tape::store::TapeStore;
 
 /// Run an interactive REPL session.
@@ -107,24 +106,86 @@ pub fn run_interactive(config: &AppConfig, workspace: &Path) -> Result<()> {
                         tools: tools.clone(),
                     };
 
-                    match rt.block_on(send_chat_request(config, &request)) {
-                        Ok(response) => {
-                            // Check if model wants to call tools
-                            if let Some(tool_calls) = response.tool_calls() {
+                    let rx_res = rt.block_on(crate::llm::client::send_chat_request_stream(
+                        config, &request,
+                    ));
+                    match rx_res {
+                        Ok(mut rx) => {
+                            let mut full_content = String::new();
+                            let mut tool_calls = Vec::<crate::llm::api_types::ToolCall>::new();
+                            let mut has_started_text = false;
+
+                            rt.block_on(async {
+                                while let Some(chunk_res) = rx.recv().await {
+                                    match chunk_res {
+                                        Ok(chunk) => match chunk {
+                                            crate::llm::api_types::StreamChunk::Content(text) => {
+                                                if !has_started_text {
+                                                    println!();
+                                                    has_started_text = true;
+                                                }
+                                                print!("{text}");
+                                                std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                                                full_content.push_str(&text);
+                                            }
+                                            crate::llm::api_types::StreamChunk::ToolCallStart {
+                                                index,
+                                                id,
+                                                name,
+                                            } => {
+                                                if tool_calls.len() <= index {
+                                                    tool_calls.resize(
+                                                        index + 1,
+                                                        crate::llm::api_types::ToolCall {
+                                                            id: id.clone(),
+                                                            call_type: "function".to_string(),
+                                                            function: crate::llm::api_types::ToolCallFunction {
+                                                                name: name.clone(),
+                                                                arguments: String::new(),
+                                                            },
+                                                        },
+                                                    );
+                                                } else {
+                                                    tool_calls[index].id = id.clone();
+                                                    tool_calls[index].function.name = name.clone();
+                                                }
+                                            }
+                                            crate::llm::api_types::StreamChunk::ToolCallArgument {
+                                                index,
+                                                text,
+                                            } => {
+                                                if index < tool_calls.len() {
+                                                    tool_calls[index].function.arguments.push_str(&text);
+                                                }
+                                            }
+                                            crate::llm::api_types::StreamChunk::Done => {
+                                                if has_started_text {
+                                                    println!();
+                                                }
+                                                break;
+                                            }
+                                        },
+                                        Err(e) => {
+                                            eprintln!("\nerror: {e}");
+                                            break;
+                                        }
+                                    }
+                                }
+                            });
+
+                            if !tool_calls.is_empty() {
                                 debug!(
                                     iteration = iteration,
                                     tool_count = tool_calls.len(),
                                     "repl.tool_calls"
                                 );
 
-                                // Append the assistant message with tool_calls
                                 messages.push(
                                     crate::llm::api_types::Message::assistant_with_tool_calls(
-                                        tool_calls.to_vec(),
+                                        tool_calls.clone(),
                                     ),
                                 );
 
-                                // Execute each tool and append results
                                 for tc in tool_calls {
                                     let result = crate::tools::registry::execute_tool(
                                         &tc.function.name,
@@ -146,15 +207,13 @@ pub fn run_interactive(config: &AppConfig, workspace: &Path) -> Result<()> {
                                         &tc.id, &result,
                                     ));
                                 }
-                                // Continue loop — re-call model with tool results
                                 continue;
                             }
 
-                            // No tool calls — we have the final response
-                            if let Some(content) = response.assistant_content() {
-                                tape.append_message("assistant", content)
+                            if !full_content.is_empty() {
+                                tape.append_message("assistant", &full_content)
                                     .map_err(CrabClawError::Io)?;
-                                println!("\n{content}\n");
+                                println!();
                             } else {
                                 eprintln!("warning: no response content from model");
                             }

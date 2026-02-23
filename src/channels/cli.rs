@@ -9,7 +9,6 @@ use crate::core::context::build_messages;
 use crate::core::error::{CrabClawError, Result};
 use crate::core::input::resolve_prompt;
 use crate::llm::api_types::ChatRequest;
-use crate::llm::client::send_chat_request;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -175,13 +174,45 @@ fn run_command(args: RunArgs) -> Result<()> {
         .build()
         .map_err(|e| CrabClawError::Network(format!("failed to start runtime: {e}")))?;
 
-    let response = rt.block_on(send_chat_request(&config, &request))?;
+    let mut rx = rt.block_on(crate::llm::client::send_chat_request_stream(
+        &config, &request,
+    ))?;
+    let mut full_content = String::new();
+    let mut has_started_text = false;
 
-    if let Some(content) = response.assistant_content() {
+    rt.block_on(async {
+        while let Some(chunk_res) = rx.recv().await {
+            match chunk_res {
+                Ok(chunk) => match chunk {
+                    crate::llm::api_types::StreamChunk::Content(text) => {
+                        if !has_started_text {
+                            println!();
+                            has_started_text = true;
+                        }
+                        print!("{text}");
+                        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                        full_content.push_str(&text);
+                    }
+                    crate::llm::api_types::StreamChunk::Done => {
+                        if has_started_text {
+                            println!();
+                        }
+                        break;
+                    }
+                    _ => {} // Ignore tool calls in single-run mode for now
+                },
+                Err(e) => {
+                    eprintln!("\nerror: {e}");
+                    break;
+                }
+            }
+        }
+    });
+
+    if !full_content.is_empty() {
         // Record assistant response to tape.
-        tape.append_message("assistant", content)
+        tape.append_message("assistant", &full_content)
             .map_err(CrabClawError::Io)?;
-        println!("{content}");
     } else {
         eprintln!("warning: no response content from model");
     }

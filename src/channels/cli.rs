@@ -113,6 +113,7 @@ fn run_command(args: RunArgs) -> Result<()> {
         api_base: args.api_base,
         model: args.model,
         system_prompt: args.system_prompt,
+        max_context_messages: None,
     };
     let config = load_runtime_config(&workspace, args.profile.as_deref(), &overrides)?;
     let prompt = resolve_prompt(args.prompt, args.prompt_file)?;
@@ -160,7 +161,7 @@ fn run_command(args: RunArgs) -> Result<()> {
     // Build multi-turn messages from tape context.
     let system_prompt =
         crate::core::context::build_system_prompt(config.system_prompt.as_deref(), &workspace);
-    let messages = build_messages(&tape, Some(&system_prompt));
+    let messages = build_messages(&tape, Some(&system_prompt), config.max_context_messages);
 
     let request = ChatRequest {
         model: config.model.clone(),
@@ -227,6 +228,7 @@ fn interactive_command(args: InteractiveArgs) -> Result<()> {
         api_base: args.api_base,
         model: args.model,
         system_prompt: args.system_prompt,
+        max_context_messages: None,
     };
     let config = load_runtime_config(&workspace, args.profile.as_deref(), &overrides)?;
     crate::channels::repl::run_interactive(&config, &workspace)
@@ -239,6 +241,7 @@ fn serve_command(args: ServeArgs) -> Result<()> {
         api_base: args.api_base,
         model: args.model,
         system_prompt: args.system_prompt,
+        max_context_messages: None,
     };
     let config = load_runtime_config(&workspace, args.profile.as_deref(), &overrides)?;
     let config = Arc::new(config);

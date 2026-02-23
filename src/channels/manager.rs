@@ -73,6 +73,7 @@ mod tests {
             telegram_allow_from: vec![],
             telegram_allow_chats: vec![],
             telegram_proxy: None,
+            max_context_messages: 50,
         })
     }
 

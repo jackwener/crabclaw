@@ -244,7 +244,7 @@ pub async fn process_message(
 
         let system_prompt =
             crate::core::context::build_system_prompt(config.system_prompt.as_deref(), workspace);
-        let mut messages = build_messages(&tape, Some(&system_prompt));
+        let mut messages = build_messages(&tape, Some(&system_prompt), config.max_context_messages);
 
         for iteration in 0..MAX_TOOL_ITERATIONS {
             let request = crate::llm::api_types::ChatRequest {

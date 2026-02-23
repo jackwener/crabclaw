@@ -59,7 +59,11 @@ pub fn build_system_prompt(config_prompt: Option<&str>, workspace: &Path) -> Str
 /// - Extracts entries with kind "message"
 /// - Preserves role and content from payload
 /// - Optionally prepends a system prompt
-pub fn build_messages(tape: &TapeStore, system_prompt: Option<&str>) -> Vec<Message> {
+pub fn build_messages(
+    tape: &TapeStore,
+    system_prompt: Option<&str>,
+    max_context_messages: usize,
+) -> Vec<Message> {
     let mut messages = Vec::new();
 
     if let Some(prompt) = system_prompt {
@@ -70,6 +74,7 @@ pub fn build_messages(tape: &TapeStore, system_prompt: Option<&str>) -> Vec<Mess
     }
 
     // Use entries since last anchor for context truncation
+    let mut tape_messages = Vec::new();
     for entry in tape.entries_since_last_anchor() {
         if entry.kind != "message" {
             continue;
@@ -91,12 +96,22 @@ pub fn build_messages(tape: &TapeStore, system_prompt: Option<&str>) -> Vec<Mess
             continue;
         }
 
-        messages.push(Message {
+        tape_messages.push(Message {
             role: role.to_string(),
             content: content.to_string(),
             tool_calls: None,
             tool_call_id: None,
         });
+    }
+
+    if tape_messages.len() > max_context_messages {
+        messages.push(Message::system(
+            "Older messages in this session have been truncated to fit the context window.",
+        ));
+        let keep_start = tape_messages.len() - max_context_messages;
+        messages.extend(tape_messages.into_iter().skip(keep_start));
+    } else {
+        messages.extend(tape_messages);
     }
 
     messages
@@ -111,7 +126,7 @@ mod tests {
     fn empty_tape_no_system_prompt() {
         let dir = tempdir().unwrap();
         let tape = TapeStore::open(dir.path(), "ctx-test").unwrap();
-        let msgs = build_messages(&tape, None);
+        let msgs = build_messages(&tape, None, 50);
         assert!(msgs.is_empty());
     }
 
@@ -119,7 +134,7 @@ mod tests {
     fn empty_tape_with_system_prompt() {
         let dir = tempdir().unwrap();
         let tape = TapeStore::open(dir.path(), "ctx-test").unwrap();
-        let msgs = build_messages(&tape, Some("You are a helpful assistant."));
+        let msgs = build_messages(&tape, Some("You are a helpful assistant."), 50);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, "system");
         assert_eq!(msgs[0].content, "You are a helpful assistant.");
@@ -133,7 +148,7 @@ mod tests {
         tape.append_message("assistant", "Hi there!").unwrap();
         tape.append_message("user", "How are you?").unwrap();
 
-        let msgs = build_messages(&tape, None);
+        let msgs = build_messages(&tape, None, 50);
         assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[0].content, "Hello");
@@ -155,7 +170,7 @@ mod tests {
             .unwrap();
         tape.append_message("assistant", "Hi").unwrap();
 
-        let msgs = build_messages(&tape, None);
+        let msgs = build_messages(&tape, None, 50);
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].content, "Hello");
         assert_eq!(msgs[1].content, "Hi");
@@ -167,7 +182,7 @@ mod tests {
         let mut tape = TapeStore::open(dir.path(), "ctx-test").unwrap();
         tape.append_message("user", "Hello").unwrap();
 
-        let msgs = build_messages(&tape, Some("Be concise."));
+        let msgs = build_messages(&tape, Some("Be concise."), 50);
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "system");
         assert_eq!(msgs[0].content, "Be concise.");
@@ -179,7 +194,7 @@ mod tests {
     fn blank_system_prompt_is_ignored() {
         let dir = tempdir().unwrap();
         let tape = TapeStore::open(dir.path(), "ctx-test").unwrap();
-        let msgs = build_messages(&tape, Some("   "));
+        let msgs = build_messages(&tape, Some("   "), 50);
         assert!(msgs.is_empty());
     }
 
@@ -190,7 +205,7 @@ mod tests {
         tape.append_message("user", "").unwrap();
         tape.append_message("user", "real").unwrap();
 
-        let msgs = build_messages(&tape, None);
+        let msgs = build_messages(&tape, None, 50);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "real");
     }
@@ -212,7 +227,7 @@ mod tests {
         tape.append_message("user", "new question").unwrap();
         tape.append_message("assistant", "new answer").unwrap();
 
-        let msgs = build_messages(&tape, None);
+        let msgs = build_messages(&tape, None, 50);
         // Only new messages should be in context
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].content, "new question");
@@ -256,5 +271,40 @@ mod tests {
         // Config override should win even when workspace file exists
         let result = build_system_prompt(Some("From config"), dir.path());
         assert_eq!(result, "From config");
+    }
+
+    #[test]
+    fn test_max_context_messages_truncation() {
+        let dir = tempdir().unwrap();
+        let mut tape = TapeStore::open(dir.path(), "ctx-test").unwrap();
+
+        // Add 5 messages
+        for i in 1..=5 {
+            tape.append_message("user", &format!("Msg {}", i)).unwrap();
+        }
+
+        // Test with max_context_messages = 3
+        let msgs = build_messages(&tape, Some("System Prompt"), 3);
+
+        // Expected:
+        // 1. "System Prompt"
+        // 2. "Older messages in this session have been truncated..."
+        // 3. "Msg 3"
+        // 4. "Msg 4"
+        // 5. "Msg 5"
+        assert_eq!(msgs.len(), 5);
+        assert_eq!(msgs[0].role, "system");
+        assert_eq!(msgs[0].content, "System Prompt");
+
+        assert_eq!(msgs[1].role, "system");
+        assert!(
+            msgs[1]
+                .content
+                .contains("truncated to fit the context window")
+        );
+
+        assert_eq!(msgs[2].content, "Msg 3");
+        assert_eq!(msgs[3].content, "Msg 4");
+        assert_eq!(msgs[4].content, "Msg 5");
     }
 }

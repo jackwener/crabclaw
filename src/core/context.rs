@@ -38,6 +38,7 @@ pub fn build_system_prompt(config_prompt: Option<&str>, workspace: &Path) -> Str
 
     // 2. Try loading from workspace
     let custom_path = workspace.join(".agent/system-prompt.md");
+    #[allow(clippy::collapsible_if)]
     if custom_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&custom_path) {
             let trimmed = content.trim();

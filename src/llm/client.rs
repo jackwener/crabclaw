@@ -52,18 +52,16 @@ async fn send_anthropic_request(
     debug!(url = %url, model = %model, "sending anthropic chat request");
 
     let mut system_text = String::new();
-    let mut messages = Vec::new();
-
     for msg in &request.messages {
         if msg.role == "system" {
             if !system_text.is_empty() {
                 system_text.push('\n');
             }
             system_text.push_str(&msg.content);
-        } else {
-            messages.push(msg.clone());
         }
     }
+
+    let messages = crate::llm::api_types::convert_messages_for_anthropic(&request.messages);
 
     let tools = request.tools.as_ref().map(|ts| {
         ts.iter()
@@ -133,18 +131,16 @@ async fn send_anthropic_request_stream(
     debug!(url = %url, model = %model, "sending anthropic chat streaming request");
 
     let mut system_text = String::new();
-    let mut messages = Vec::new();
-
     for msg in &request.messages {
         if msg.role == "system" {
             if !system_text.is_empty() {
                 system_text.push('\n');
             }
             system_text.push_str(&msg.content);
-        } else {
-            messages.push(msg.clone());
         }
     }
+
+    let messages = crate::llm::api_types::convert_messages_for_anthropic(&request.messages);
 
     let tools = request.tools.as_ref().map(|ts| {
         ts.iter()

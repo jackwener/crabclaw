@@ -272,12 +272,142 @@ impl From<&ToolDefinition> for AnthropicToolDefinition {
 #[derive(Debug, Clone, Serialize)]
 pub struct AnthropicRequest {
     pub model: String,
-    pub messages: Vec<Message>,
+    pub messages: Vec<AnthropicMessage>,
     pub max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<AnthropicToolDefinition>>,
+}
+
+/// A message in Anthropic format with structured content blocks.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnthropicMessage {
+    pub role: String,
+    pub content: AnthropicContent,
+}
+
+/// Content can be a plain string or structured blocks.
+#[derive(Debug, Clone)]
+pub enum AnthropicContent {
+    Text(String),
+    Blocks(Vec<AnthropicContentItem>),
+}
+
+impl Serialize for AnthropicContent {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            AnthropicContent::Text(text) => serializer.serialize_str(text),
+            AnthropicContent::Blocks(blocks) => blocks.serialize(serializer),
+        }
+    }
+}
+
+/// A content block item for Anthropic messages.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum AnthropicContentItem {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
+}
+
+/// Convert CrabClaw's unified messages to Anthropic format.
+///
+/// Key conversions:
+/// - `system` messages → filtered out (handled via AnthropicRequest.system)
+/// - `user`/`assistant` plain text → kept as-is
+/// - `assistant` with tool_calls → content blocks with tool_use items
+/// - `tool` messages → `user` message with tool_result content blocks
+pub fn convert_messages_for_anthropic(messages: &[Message]) -> Vec<AnthropicMessage> {
+    let mut result = Vec::new();
+
+    let mut i = 0;
+    while i < messages.len() {
+        let msg = &messages[i];
+
+        if msg.role == "system" {
+            i += 1;
+            continue;
+        }
+
+        if msg.role == "assistant" {
+            if let Some(tool_calls) = &msg.tool_calls {
+                // Assistant message with tool calls → structured content blocks
+                let mut blocks = Vec::new();
+                if !msg.content.is_empty() {
+                    blocks.push(AnthropicContentItem::Text {
+                        text: msg.content.clone(),
+                    });
+                }
+                for tc in tool_calls {
+                    let input: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                        .unwrap_or(serde_json::json!({}));
+                    blocks.push(AnthropicContentItem::ToolUse {
+                        id: tc.id.clone(),
+                        name: tc.function.name.clone(),
+                        input,
+                    });
+                }
+                result.push(AnthropicMessage {
+                    role: "assistant".to_string(),
+                    content: AnthropicContent::Blocks(blocks),
+                });
+                i += 1;
+                continue;
+            }
+
+            // Plain assistant message
+            result.push(AnthropicMessage {
+                role: "assistant".to_string(),
+                content: AnthropicContent::Text(msg.content.clone()),
+            });
+            i += 1;
+            continue;
+        }
+
+        if msg.role == "tool" {
+            // Collect consecutive tool messages into a single user message
+            let mut blocks = Vec::new();
+            while i < messages.len() && messages[i].role == "tool" {
+                let tool_msg = &messages[i];
+                if let Some(tool_call_id) = &tool_msg.tool_call_id {
+                    blocks.push(AnthropicContentItem::ToolResult {
+                        tool_use_id: tool_call_id.clone(),
+                        content: tool_msg.content.clone(),
+                    });
+                }
+                i += 1;
+            }
+            result.push(AnthropicMessage {
+                role: "user".to_string(),
+                content: AnthropicContent::Blocks(blocks),
+            });
+            continue;
+        }
+
+        // user or other roles
+        result.push(AnthropicMessage {
+            role: msg.role.clone(),
+            content: AnthropicContent::Text(msg.content.clone()),
+        });
+        i += 1;
+    }
+
+    result
 }
 
 /// A single content block in an Anthropic response.

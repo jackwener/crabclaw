@@ -524,6 +524,7 @@ impl AnthropicResponse {
 
         let mut tool_calls = Vec::new();
         for block in &self.content {
+            #[allow(clippy::collapsible_if)]
             if block.block_type == "tool_use" {
                 if let (Some(id), Some(name), Some(input)) = (&block.id, &block.name, &block.input)
                 {

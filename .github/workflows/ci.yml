@@ -45,8 +45,11 @@ jobs:
       - name: Run unit tests
         run: cargo test --lib
 
-      - name: Run integration tests
+      - name: Run CLI integration tests
         run: cargo test --test cli_run
+
+      - name: Run Telegram integration tests
+        run: cargo test --test telegram_integration
 
   build:
     name: Build Release

@@ -440,12 +440,15 @@ async fn send_openai_request_stream(
                                 ) {
                                     Ok(parsed) => {
                                         if let Some(choice) = parsed.choices.first() {
-                                            if let Some(content) = &choice.delta.content {
-                                                if !content.is_empty() {
-                                                    let _ = tx.send(Ok(StreamChunk::Content(
-                                                        content.clone(),
-                                                    )));
-                                                }
+                                            if let Some(content) = choice
+                                                .delta
+                                                .content
+                                                .as_ref()
+                                                .filter(|c| !c.is_empty())
+                                            {
+                                                let _ = tx.send(Ok(StreamChunk::Content(
+                                                    content.clone(),
+                                                )));
                                             }
                                             if let Some(tool_calls) = &choice.delta.tool_calls {
                                                 for tc in tool_calls {

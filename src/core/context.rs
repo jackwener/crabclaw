@@ -31,12 +31,10 @@ pub fn build_system_prompt(config_prompt: Option<&str>, workspace: &Path) -> Str
 
     // 3. Workspace Agent Prompt (.agent/system-prompt.md)
     let custom_path = workspace.join(".agent/system-prompt.md");
-    if custom_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&custom_path) {
-            let trimmed = content.trim();
-            if !trimmed.is_empty() {
-                sections.push(trimmed.to_string());
-            }
+    if let Ok(content) = std::fs::read_to_string(&custom_path) {
+        let trimmed = content.trim();
+        if !trimmed.is_empty() {
+            sections.push(trimmed.to_string());
         }
     }
 

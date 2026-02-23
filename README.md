@@ -3,7 +3,7 @@
 [![CI](https://github.com/jackwener/crabclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/jackwener/crabclaw/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-CrabClaw is a Rust implementation of [bub](https://github.com/PsiACE/bub), providing an OpenClaw-compatible agentic coding toolchain.
+CrabClaw is an OpenClaw-compatible agentic coding toolchain written in Rust.
 
 ## Features
 
@@ -61,7 +61,7 @@ The project version is 0.1.0...
 ## Development
 
 ```bash
-cargo test               # Run all 194 tests
+cargo test               # Run all 205 tests
 cargo clippy             # Lint check
 cargo fmt                # Format
 ./scripts/smoke-test.sh  # Full verification (build + clippy + tests + live API)
@@ -71,5 +71,8 @@ cargo fmt                # Format
 
 - [Architecture (EN)](docs/architecture.md) | [中文](docs/architecture.zh-CN.md)
 - Feature test plan: `docs/test-plans/phase-1-mvp.md`
-- Bub alignment backlog: `docs/plans/bub-alignment-backlog.md`
 - Architecture decisions: `docs/adr/`
+
+## Acknowledgements
+
+Inspired by [bub](https://github.com/PsiACE/bub).

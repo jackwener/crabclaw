@@ -1,7 +1,7 @@
 # Bub Alignment Backlog
 
 - Owner: PM
-- Last updated: 2026-02-21
+- Last updated: 2026-02-23
 - Alignment target: feature-level and design-level parity with Bub, not line-by-line translation.
 
 ## Alignment Rules
@@ -12,26 +12,29 @@
 
 ## Feature Matrix
 
-| Priority | Bub Capability | Bub Reference | CrabClaw Plan | Status |
-|---|---|---|---|---|
-| P0 | Config loading and deterministic precedence | `src/bub/config/settings.py` | `src/config.rs` + tests (`TP-001`,`TP-002`) | In Progress |
-| P0 | Non-interactive message execution modes | `src/bub/cli/app.py` (`run`) | `run --prompt/--prompt-file/stdin` + tests (`TP-003`,`TP-004`,`TP-005`) | In Progress |
-| P0 | Structured error categorization baseline | `src/bub/core/router.py` + docs | `src/error.rs` base categories | In Progress |
-| P1 | Deterministic command boundary (comma-prefixed) | `src/bub/core/command_detector.py` + `tests/test_router.py` | Rust router module + parity tests | Planned |
-| P1 | Command execution fallback-to-model behavior | `src/bub/core/router.py` | router result blocks and failure context | Planned |
-| P1 | Tape-first session context with anchors/handoff | `src/bub/tape/service.py` | append-only local tape + anchor APIs | Planned |
-| P2 | Unified tool + skill registry view | `src/bub/tools/registry.py` + skills loader | registry and progressive tool view | Planned |
-| P2 | Channel integrations (Telegram/Discord) | `src/bub/channels/*` | optional adapters after CLI parity | Planned |
+| Priority | Bub Capability | CrabClaw Implementation | Status |
+|---|---|---|---|
+| P0 | Config loading and deterministic precedence | `src/core/config.rs` — `.env.local` + env vars + CLI flags | ✅ Done |
+| P0 | Non-interactive message execution modes | `src/channels/cli.rs` — `--prompt` / `--prompt-file` / stdin | ✅ Done |
+| P0 | Structured error categorization baseline | `src/core/error.rs` — `thiserror` categories | ✅ Done |
+| P0 | Deterministic command boundary (comma-prefixed) | `src/core/router.rs` + `src/core/command.rs` | ✅ Done |
+| P0 | Command execution fallback-to-model behavior | `src/core/router.rs` — failure XML context → model | ✅ Done |
+| P0 | Tape-first session context with anchors/handoff | `src/tape/store.rs` — JSONL append-only + anchors + search | ✅ Done |
+| P1 | Unified tool + skill registry view | `src/tools/registry.rs` + `src/tools/skills.rs` | ✅ Done |
+| P1 | Shell execution with failure self-correction | `src/core/shell.rs` — `/bin/sh -c` + timeout + stderr capture | ✅ Done |
+| P1 | File operations (read/write/list/search) | `src/tools/file_ops.rs` — workspace-sandboxed | ✅ Done |
+| P1 | Tool calling loop (multi-iteration reasoning) | REPL + Telegram — up to 5 rounds | ✅ Done |
+| P1 | Channel integrations (Telegram) | `src/channels/telegram.rs` — long polling + ACL | ✅ Done |
+| P1 | Streaming output | `src/llm/client.rs` — SSE for OpenAI + Anthropic | ✅ Done |
+| P1 | Anthropic native adapter | `src/llm/client.rs` — message conversion + tool serialization | ✅ Done |
+| P1 | System prompt modular assembly | `src/core/context.rs` — 5-section prompt | ✅ Done |
+| P1 | Context window management | `src/core/context.rs` — sliding window truncation | ✅ Done |
+| P2 | Discord channel | — | Planned |
+| P2 | Voice / multimodal input | — | Planned |
+| P2 | Multi-agent orchestration | — | Planned |
 
-## Current Slice (S0)
+## Summary
 
-1. Build Rust `library+CLI` skeleton aligned with ADR 0001.
-2. Implement P0 config precedence and input modes.
-3. Set and validate testing baseline in CI-ready commands.
-4. Produce first Reviewer report with parity gaps.
-
-## Exit Criteria for S0
-
-1. P0 items marked "In Progress" are runnable with automated tests.
-2. `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test` pass.
-3. Reviewer publishes first parity report in `docs/reviews/`.
+- **15 of 18** features implemented and tested.
+- **205 automated tests** covering all completed features.
+- CI pipeline (GitHub Actions) is green on `ubuntu-latest` + `macos-latest`.

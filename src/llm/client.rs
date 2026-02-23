@@ -441,27 +441,31 @@ async fn send_openai_request_stream(
                                                 for tc in tool_calls {
                                                     if let Some(id) = &tc.id {
                                                         // It's the start of a tool call
-                                                        if let Some(func) = &tc.function {
-                                                            if let Some(name) = &func.name {
-                                                                let _ = tx.send(Ok(
-                                                                    StreamChunk::ToolCallStart {
-                                                                        index: tc.index,
-                                                                        id: id.clone(),
-                                                                        name: name.clone(),
-                                                                    },
-                                                                ));
-                                                            }
-                                                        }
-                                                    }
-                                                    if let Some(func) = &tc.function {
-                                                        if let Some(args) = &func.arguments {
+                                                        if let Some(name) = tc
+                                                            .function
+                                                            .as_ref()
+                                                            .and_then(|f| f.name.as_ref())
+                                                        {
                                                             let _ = tx.send(Ok(
-                                                                StreamChunk::ToolCallArgument {
+                                                                StreamChunk::ToolCallStart {
                                                                     index: tc.index,
-                                                                    text: args.clone(),
+                                                                    id: id.clone(),
+                                                                    name: name.clone(),
                                                                 },
                                                             ));
                                                         }
+                                                    }
+                                                    if let Some(args) = tc
+                                                        .function
+                                                        .as_ref()
+                                                        .and_then(|f| f.arguments.as_ref())
+                                                    {
+                                                        let _ = tx.send(Ok(
+                                                            StreamChunk::ToolCallArgument {
+                                                                index: tc.index,
+                                                                text: args.clone(),
+                                                            },
+                                                        ));
                                                     }
                                                 }
                                             }
@@ -536,6 +540,7 @@ mod tests {
             telegram_allow_from: vec![],
             telegram_allow_chats: vec![],
             telegram_proxy: None,
+            max_context_messages: 50,
         }
     }
 

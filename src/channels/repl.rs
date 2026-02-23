@@ -91,7 +91,8 @@ pub fn run_interactive(config: &AppConfig, workspace: &Path) -> Result<()> {
                     config.system_prompt.as_deref(),
                     workspace,
                 );
-                let mut messages = build_messages(&tape, Some(&system_prompt));
+                let mut messages =
+                    build_messages(&tape, Some(&system_prompt), config.max_context_messages);
 
                 debug!(message_count = messages.len(), "sending multi-turn request");
 

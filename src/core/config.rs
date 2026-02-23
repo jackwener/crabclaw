@@ -16,6 +16,8 @@ const TELEGRAM_TOKEN_KEY: &str = "TELEGRAM_TOKEN";
 const TELEGRAM_ALLOW_FROM_KEY: &str = "TELEGRAM_ALLOW_FROM";
 const TELEGRAM_ALLOW_CHATS_KEY: &str = "TELEGRAM_ALLOW_CHATS";
 const TELEGRAM_PROXY_KEY: &str = "TELEGRAM_PROXY";
+const MAX_CONTEXT_MESSAGES_KEY: &str = "MAX_CONTEXT_MESSAGES";
+const DEFAULT_MAX_CONTEXT_MESSAGES: usize = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AppConfig {
@@ -29,6 +31,9 @@ pub struct AppConfig {
     pub telegram_allow_from: Vec<String>,
     pub telegram_allow_chats: Vec<String>,
     pub telegram_proxy: Option<String>,
+
+    // Tape window config
+    pub max_context_messages: usize,
 }
 
 impl AppConfig {
@@ -43,6 +48,7 @@ pub struct CliConfigOverrides {
     pub api_base: Option<String>,
     pub model: Option<String>,
     pub system_prompt: Option<String>,
+    pub max_context_messages: Option<usize>,
 }
 
 pub fn load_runtime_config(
@@ -136,6 +142,17 @@ pub fn resolve_config(
         dotenv_vars.get(TELEGRAM_PROXY_KEY),
     ]);
 
+    let max_context_messages = first_present([
+        cli_overrides
+            .max_context_messages
+            .map(|v| v.to_string())
+            .as_ref(), // mapped for type consistency
+        env_vars.get(MAX_CONTEXT_MESSAGES_KEY),
+        dotenv_vars.get(MAX_CONTEXT_MESSAGES_KEY),
+    ])
+    .and_then(|s| s.parse::<usize>().ok())
+    .unwrap_or(DEFAULT_MAX_CONTEXT_MESSAGES);
+
     Ok(AppConfig {
         profile: profile_name,
         api_key,
@@ -146,6 +163,7 @@ pub fn resolve_config(
         telegram_allow_from,
         telegram_allow_chats,
         telegram_proxy,
+        max_context_messages,
     })
 }
 
@@ -251,6 +269,7 @@ mod tests {
             api_base: None,
             model: Some("cli-model".to_string()),
             system_prompt: None,
+            max_context_messages: None,
         };
 
         let config =

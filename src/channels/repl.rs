@@ -110,46 +110,44 @@ pub fn run_interactive(config: &AppConfig, workspace: &Path) -> Result<()> {
                     match rt.block_on(send_chat_request(config, &request)) {
                         Ok(response) => {
                             // Check if model wants to call tools
-                            if response.has_tool_calls() {
-                                if let Some(tool_calls) = response.tool_calls() {
+                            if let Some(tool_calls) = response.tool_calls() {
+                                debug!(
+                                    iteration = iteration,
+                                    tool_count = tool_calls.len(),
+                                    "repl.tool_calls"
+                                );
+
+                                // Append the assistant message with tool_calls
+                                messages.push(
+                                    crate::llm::api_types::Message::assistant_with_tool_calls(
+                                        tool_calls.to_vec(),
+                                    ),
+                                );
+
+                                // Execute each tool and append results
+                                for tc in tool_calls {
+                                    let result = crate::tools::registry::execute_tool(
+                                        &tc.function.name,
+                                        &tc.function.arguments,
+                                        &tape,
+                                        workspace,
+                                    );
                                     debug!(
-                                        iteration = iteration,
-                                        tool_count = tool_calls.len(),
-                                        "repl.tool_calls"
+                                        tool = %tc.function.name,
+                                        result_len = result.len(),
+                                        "repl.tool_result"
                                     );
-
-                                    // Append the assistant message with tool_calls
-                                    messages.push(
-                                        crate::llm::api_types::Message::assistant_with_tool_calls(
-                                            tool_calls.to_vec(),
-                                        ),
+                                    println!(
+                                        "  [tool] {} → {} chars",
+                                        tc.function.name,
+                                        result.len()
                                     );
-
-                                    // Execute each tool and append results
-                                    for tc in tool_calls {
-                                        let result = crate::tools::registry::execute_tool(
-                                            &tc.function.name,
-                                            &tc.function.arguments,
-                                            &tape,
-                                            workspace,
-                                        );
-                                        debug!(
-                                            tool = %tc.function.name,
-                                            result_len = result.len(),
-                                            "repl.tool_result"
-                                        );
-                                        println!(
-                                            "  [tool] {} → {} chars",
-                                            tc.function.name,
-                                            result.len()
-                                        );
-                                        messages.push(crate::llm::api_types::Message::tool(
-                                            &tc.id, &result,
-                                        ));
-                                    }
-                                    // Continue loop — re-call model with tool results
-                                    continue;
+                                    messages.push(crate::llm::api_types::Message::tool(
+                                        &tc.id, &result,
+                                    ));
                                 }
+                                // Continue loop — re-call model with tool results
+                                continue;
                             }
 
                             // No tool calls — we have the final response

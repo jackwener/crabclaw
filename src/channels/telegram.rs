@@ -257,40 +257,35 @@ pub async fn process_message(
             match crate::llm::client::send_chat_request(config, &request).await {
                 Ok(chat_response) => {
                     // Check if model wants to call tools
-                    if chat_response.has_tool_calls() {
-                        if let Some(tool_calls) = chat_response.tool_calls() {
+                    if let Some(tool_calls) = chat_response.tool_calls() {
+                        debug!(
+                            iteration = iteration,
+                            tool_count = tool_calls.len(),
+                            "telegram.tool_calls"
+                        );
+
+                        // Append the assistant message with tool_calls to context
+                        messages.push(crate::llm::api_types::Message::assistant_with_tool_calls(
+                            tool_calls.to_vec(),
+                        ));
+
+                        // Execute each tool and append results
+                        for tc in tool_calls {
+                            let result = crate::tools::registry::execute_tool(
+                                &tc.function.name,
+                                &tc.function.arguments,
+                                &tape,
+                                workspace,
+                            );
                             debug!(
-                                iteration = iteration,
-                                tool_count = tool_calls.len(),
-                                "telegram.tool_calls"
+                                tool = %tc.function.name,
+                                result = %result,
+                                "telegram.tool_result"
                             );
-
-                            // Append the assistant message with tool_calls to context
-                            messages.push(
-                                crate::llm::api_types::Message::assistant_with_tool_calls(
-                                    tool_calls.to_vec(),
-                                ),
-                            );
-
-                            // Execute each tool and append results
-                            for tc in tool_calls {
-                                let result = crate::tools::registry::execute_tool(
-                                    &tc.function.name,
-                                    &tc.function.arguments,
-                                    &tape,
-                                    workspace,
-                                );
-                                debug!(
-                                    tool = %tc.function.name,
-                                    result = %result,
-                                    "telegram.tool_result"
-                                );
-                                messages
-                                    .push(crate::llm::api_types::Message::tool(&tc.id, &result));
-                            }
-                            // Continue loop — re-call model with tool results
-                            continue;
+                            messages.push(crate::llm::api_types::Message::tool(&tc.id, &result));
                         }
+                        // Continue loop — re-call model with tool results
+                        continue;
                     }
 
                     // No tool calls — we have the final response

@@ -137,6 +137,7 @@ async fn send_openai_request(config: &AppConfig, request: &ChatRequest) -> Resul
     debug!(body = %body, "raw response body");
 
     if status.is_success() {
+        #[allow(clippy::collapsible_if)]
         if let Ok(ns_err) = serde_json::from_str::<NonStandardError>(&body) {
             if ns_err.success == Some(false) || ns_err.code.is_some_and(|c| c >= 400) {
                 let msg = ns_err

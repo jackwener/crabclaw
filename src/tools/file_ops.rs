@@ -91,6 +91,7 @@ pub fn write_file(workspace: &Path, file_path: &str, content: &str) -> String {
     match resolve_safe_path(workspace, file_path) {
         Some(path) => {
             // Ensure parent directories exist
+            #[allow(clippy::collapsible_if)]
             if let Some(parent) = path.parent() {
                 if let Err(e) = std::fs::create_dir_all(parent) {
                     return format!("Error creating directories: {e}");

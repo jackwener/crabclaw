@@ -30,7 +30,8 @@ When helping the user:
 pub fn build_system_prompt(config_prompt: Option<&str>, workspace: &Path) -> String {
     // 1. Explicit override takes precedence
     if let Some(prompt) = config_prompt {
-        if !prompt.trim().is_empty() {
+        let trimmed = prompt.trim();
+        if !trimmed.is_empty() {
             return prompt.to_string();
         }
     }
@@ -61,7 +62,8 @@ pub fn build_messages(tape: &TapeStore, system_prompt: Option<&str>) -> Vec<Mess
     let mut messages = Vec::new();
 
     if let Some(prompt) = system_prompt {
-        if !prompt.trim().is_empty() {
+        let trimmed = prompt.trim();
+        if !trimmed.is_empty() {
             messages.push(Message::system(prompt));
         }
     }

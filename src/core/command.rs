@@ -148,6 +148,7 @@ pub fn parse_kv_arguments(tokens: &[String]) -> ParsedArgs {
             continue;
         }
 
+        #[allow(clippy::collapsible_if)]
         if let Some((key, value)) = token.split_once('=') {
             if !key.is_empty() {
                 args.kwargs.push((key.to_string(), value.to_string()));

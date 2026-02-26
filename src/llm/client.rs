@@ -493,12 +493,14 @@ async fn send_openai_request_stream(
                                                         .as_ref()
                                                         .and_then(|f| f.arguments.as_ref())
                                                     {
-                                                        let _ = tx.send(Ok(
-                                                            StreamChunk::ToolCallArgument {
-                                                                index: tc.index,
-                                                                text: args.clone(),
-                                                            },
-                                                        ));
+                                                        if !args.is_empty() {
+                                                            let _ = tx.send(Ok(
+                                                                StreamChunk::ToolCallArgument {
+                                                                    index: tc.index,
+                                                                    text: args.clone(),
+                                                                },
+                                                            ));
+                                                        }
                                                     }
                                                 }
                                             }
@@ -558,7 +560,8 @@ fn handle_error_response(status: reqwest::StatusCode, body_text: &str) -> Result
 mod tests {
     use super::*;
     use crate::core::config::AppConfig;
-    use crate::llm::api_types::{ChatRequest, Message};
+    use crate::llm::api_types::{ChatRequest, Message, StreamChunk};
+    use tokio::sync::mpsc;
 
     fn test_config(api_base: &str) -> AppConfig {
         AppConfig {
@@ -573,6 +576,25 @@ mod tests {
             telegram_proxy: None,
             max_context_messages: 50,
         }
+    }
+
+    async fn collect_stream_chunks(
+        mut rx: mpsc::UnboundedReceiver<Result<StreamChunk>>,
+    ) -> Vec<StreamChunk> {
+        let mut out = Vec::new();
+        while let Some(item) = rx.recv().await {
+            match item {
+                Ok(chunk) => {
+                    let done = matches!(chunk, StreamChunk::Done);
+                    out.push(chunk);
+                    if done {
+                        break;
+                    }
+                }
+                Err(e) => panic!("stream returned error: {e}"),
+            }
+        }
+        out
     }
 
     // TP-008: HTTP 401 response → Auth error
@@ -800,6 +822,137 @@ mod tests {
             CrabClawError::Api(msg) => assert!(msg.contains("500"), "msg: {msg}"),
             other => panic!("expected Api error, got: {other}"),
         }
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn openai_stream_content_and_done() {
+        let mut server = mockito::Server::new_async().await;
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "text/event-stream")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let config = test_config(&server.url());
+        let request = ChatRequest {
+            model: "test-model".to_string(),
+            messages: vec![Message::user("hello")],
+            max_tokens: None,
+            tools: None,
+        };
+
+        let rx = send_chat_request_stream(&config, &request)
+            .await
+            .expect("stream request should succeed");
+        let chunks = collect_stream_chunks(rx).await;
+
+        assert_eq!(
+            chunks,
+            vec![
+                StreamChunk::Content("Hello".to_string()),
+                StreamChunk::Content(" world".to_string()),
+                StreamChunk::Done
+            ]
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn openai_stream_tool_calls_and_arguments() {
+        let mut server = mockito::Server::new_async().await;
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"file.write\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\"\"}}]},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\",\\\"content\\\":\\\"x\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "text/event-stream")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let config = test_config(&server.url());
+        let request = ChatRequest {
+            model: "test-model".to_string(),
+            messages: vec![Message::user("hello")],
+            max_tokens: None,
+            tools: None,
+        };
+
+        let rx = send_chat_request_stream(&config, &request)
+            .await
+            .expect("stream request should succeed");
+        let chunks = collect_stream_chunks(rx).await;
+
+        assert_eq!(
+            chunks,
+            vec![
+                StreamChunk::ToolCallStart {
+                    index: 0,
+                    id: "call_1".to_string(),
+                    name: "file.write".to_string()
+                },
+                StreamChunk::ToolCallArgument {
+                    index: 0,
+                    text: "{\"path\":\"a.txt\"".to_string()
+                },
+                StreamChunk::ToolCallArgument {
+                    index: 0,
+                    text: ",\"content\":\"x\"}".to_string()
+                },
+                StreamChunk::Done
+            ]
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn openai_stream_ignores_malformed_events_and_recovers() {
+        let mut server = mockito::Server::new_async().await;
+        let body = concat!(
+            "data: not json at all\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "text/event-stream")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let config = test_config(&server.url());
+        let request = ChatRequest {
+            model: "test-model".to_string(),
+            messages: vec![Message::user("hello")],
+            max_tokens: None,
+            tools: None,
+        };
+
+        let rx = send_chat_request_stream(&config, &request)
+            .await
+            .expect("stream request should succeed");
+        let chunks = collect_stream_chunks(rx).await;
+
+        assert_eq!(
+            chunks,
+            vec![StreamChunk::Content("ok".to_string()), StreamChunk::Done]
+        );
         mock.assert_async().await;
     }
 }

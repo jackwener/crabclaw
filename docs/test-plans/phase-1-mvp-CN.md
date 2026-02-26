@@ -11,7 +11,7 @@
 
 - **单元测试** (`cargo test --lib`)：核心逻辑、数据映射、纯函数。
 - **CLI 集成测试** (`tests/cli_run.rs`)：真实二进制的端到端 CLI 行为。
-- **Telegram 集成测试** (`tests/telegram_integration.rs`)：通过 `process_message` 的全链路管线（用 `mockito` mock LLM API）。
+- **Telegram 集成测试**（`tests/telegram_routing_integration.rs`、`tests/telegram_provider_integration.rs`、`tests/telegram_tools_integration.rs`）：通过 `process_message` 的全链路管线（用 `mockito` mock LLM API），并按 routing/provider/tool-loop 拆分职责。
 - **CI**：`cargo fmt --check` + `cargo clippy -D warnings` + 全部测试套件在 `ubuntu-latest` 和 `macos-latest` 上运行。
 
 ## 测试矩阵
@@ -75,6 +75,6 @@
 
 ## 当前统计
 
-- **自动化测试总数**：205（177 单元 + 10 CLI + 18 Telegram）
+- **自动化测试总数**：持续演进，建议用 `cargo test -- --list | wc -l` 查看实时数量。
 - **CI 管线**：GitHub Actions，push/PR 到 `main` 时触发
 - **全部测试通过**：✅

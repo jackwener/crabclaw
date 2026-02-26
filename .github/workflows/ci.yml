@@ -53,10 +53,15 @@ jobs:
         run: cargo test --test cli_run
 
       - name: Run AgentLoop integration tests
-        run: cargo test --test agent_loop_integration
+        run: |
+          cargo test --test agent_loop_routing_integration
+          cargo test --test agent_loop_tooling_integration
 
       - name: Run Telegram integration tests
-        run: cargo test --test telegram_integration
+        run: |
+          cargo test --test telegram_routing_integration
+          cargo test --test telegram_provider_integration
+          cargo test --test telegram_tools_integration
 
       - name: Run live E2E tests
         if: ${{ env.LIVE_API_KEY != '' }}

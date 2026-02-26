@@ -64,7 +64,7 @@ The project version is 0.1.0...
 ## Development
 
 ```bash
-cargo test               # Run all 261 tests
+cargo test               # Run all tests (unit + integration + live if configured)
 cargo clippy             # Lint check
 cargo fmt                # Format
 ./scripts/smoke-test.sh  # Full verification (build + clippy + tests + live API)

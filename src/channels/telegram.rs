@@ -120,27 +120,24 @@ async fn handle_message(
 
     // ACL check
     if let Some(user) = msg.from.as_ref() {
-        let allow_from = &config.telegram_allow_from;
-        let allow_chats = &config.telegram_allow_chats;
-
-        if !allow_from.is_empty() || !allow_chats.is_empty() {
-            let user_id_str = user.id.0.to_string();
-            let username = user.username.clone().unwrap_or_default();
-            let chat_id_str = chat_id.0.to_string();
-
-            let chat_ok = allow_chats.is_empty() || allow_chats.contains(&chat_id_str);
-            let user_ok = allow_from.is_empty()
-                || allow_from.contains(&user_id_str)
-                || (!username.is_empty() && allow_from.contains(&username));
-
-            if !chat_ok || !user_ok {
-                warn!(
-                    "telegram.acl.deny user_id={} username={} chat_id={}",
-                    user_id_str, username, chat_id_str
-                );
-                let _ = bot.send_message(chat_id, "Access denied.").await;
-                return;
-            }
+        let user_id_str = user.id.0.to_string();
+        let username = user.username.as_deref();
+        let chat_id_str = chat_id.0.to_string();
+        if !acl_allows(
+            &config.telegram_allow_from,
+            &config.telegram_allow_chats,
+            &user_id_str,
+            username,
+            &chat_id_str,
+        ) {
+            warn!(
+                "telegram.acl.deny user_id={} username={} chat_id={}",
+                user_id_str,
+                username.unwrap_or_default(),
+                chat_id_str
+            );
+            let _ = bot.send_message(chat_id, "Access denied.").await;
+            return;
         }
     }
 
@@ -176,6 +173,27 @@ async fn handle_message(
             }
         }
     }
+}
+
+fn acl_allows(
+    allow_from: &[String],
+    allow_chats: &[String],
+    user_id: &str,
+    username: Option<&str>,
+    chat_id: &str,
+) -> bool {
+    if allow_from.is_empty() && allow_chats.is_empty() {
+        return true;
+    }
+
+    let chat_ok = allow_chats.is_empty() || allow_chats.iter().any(|c| c == chat_id);
+    let user_ok = allow_from.is_empty()
+        || allow_from.iter().any(|u| u == user_id)
+        || username
+            .filter(|u| !u.is_empty())
+            .is_some_and(|u| allow_from.iter().any(|v| v == u));
+
+    chat_ok && user_ok
 }
 
 /// Process a message through the CrabClaw router + model pipeline.
@@ -215,6 +233,10 @@ pub async fn process_message(
 
 /// Split a long message into chunks that fit Telegram's per-message limit.
 fn split_message(text: &str, max_len: usize) -> Vec<String> {
+    if max_len == 0 {
+        return Vec::new();
+    }
+
     if text.len() <= max_len {
         return vec![text.to_string()];
     }
@@ -237,9 +259,20 @@ fn split_message(text: &str, max_len: usize) -> Vec<String> {
             .unwrap_or(max_len.min(remaining.len()));
 
         // Try to split at a newline within the safe range
-        let split_at = remaining[..safe_end].rfind('\n').unwrap_or(safe_end);
+        let mut split_at = remaining[..safe_end].rfind('\n').unwrap_or(safe_end);
+        if split_at == 0 {
+            // Ensure forward progress even when max_len is smaller than the first UTF-8 char.
+            split_at = remaining
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| i)
+                .unwrap_or(remaining.len());
+        }
 
-        chunks.push(remaining[..split_at].to_string());
+        let chunk = &remaining[..split_at];
+        if !chunk.is_empty() {
+            chunks.push(chunk.to_string());
+        }
         remaining = remaining[split_at..].trim_start_matches('\n');
     }
 
@@ -276,6 +309,26 @@ mod tests {
     }
 
     #[test]
+    fn split_utf8_small_limit_no_empty_chunks() {
+        let text = "你你你";
+        let chunks = split_message(text, 1);
+        assert_eq!(chunks, vec!["你", "你", "你"]);
+    }
+
+    #[test]
+    fn split_zero_limit_returns_empty() {
+        let chunks = split_message("hello", 0);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn split_utf8_preserves_valid_boundaries() {
+        let text = "你好\n世界";
+        let chunks = split_message(text, 2);
+        assert_eq!(chunks, vec!["你", "好", "世", "界"]);
+    }
+
+    #[test]
     fn channel_response_to_reply_with_error() {
         let r = ChannelResponse {
             error: Some("something broke".to_string()),
@@ -283,5 +336,36 @@ mod tests {
         };
         let reply = r.to_reply().unwrap();
         assert!(reply.contains("something broke"));
+    }
+
+    #[test]
+    fn acl_allows_when_both_lists_empty() {
+        assert!(acl_allows(&[], &[], "100", Some("alice"), "200"));
+    }
+
+    #[test]
+    fn acl_denies_when_chat_not_allowed() {
+        let allow_from = vec!["100".to_string()];
+        let allow_chats = vec!["300".to_string()];
+        assert!(!acl_allows(
+            &allow_from,
+            &allow_chats,
+            "100",
+            Some("alice"),
+            "200"
+        ));
+    }
+
+    #[test]
+    fn acl_allows_by_username() {
+        let allow_from = vec!["alice".to_string()];
+        assert!(acl_allows(&allow_from, &[], "100", Some("alice"), "200"));
+    }
+
+    #[test]
+    fn acl_denies_when_user_and_chat_mismatch() {
+        let allow_from = vec!["999".to_string()];
+        let allow_chats = vec!["300".to_string()];
+        assert!(!acl_allows(&allow_from, &allow_chats, "100", Some("alice"), "200"));
     }
 }

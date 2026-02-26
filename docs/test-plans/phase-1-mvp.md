@@ -11,7 +11,7 @@
 
 - **Unit tests** (`cargo test --lib`): Core logic, data mapping, and pure functions.
 - **CLI integration tests** (`tests/cli_run.rs`): End-to-end CLI behavior with real binary.
-- **Telegram integration tests** (`tests/telegram_integration.rs`): Full pipeline via `process_message` with mock LLM API (`mockito`).
+- **Telegram integration tests** (`tests/telegram_routing_integration.rs`, `tests/telegram_provider_integration.rs`, `tests/telegram_tools_integration.rs`): Full `process_message` pipeline via mock LLM API (`mockito`), grouped by routing/provider/tool-loop responsibilities.
 - **CI**: `cargo fmt --check` + `cargo clippy -D warnings` + all test suites on `ubuntu-latest` and `macos-latest`.
 
 ## Test Matrix
@@ -115,7 +115,7 @@
 
 ## Current Stats
 
-- **Total automated tests**: 261 (218 unit + 15 AgentLoop + 10 CLI + 18 Telegram)
+- **Total automated tests**: evolves with active development; use `cargo test -- --list | wc -l` for current count.
 - **Live E2E tests**: 10 (require API key)
 - **CI pipeline**: GitHub Actions on push/PR to `main`
 - **All tests passing**: ✅
@@ -126,7 +126,10 @@
 cargo fmt --check                                          # Format
 cargo clippy --all-targets --all-features -- -D warnings   # Lint
 cargo test                                                 # All tests
-cargo test --test agent_loop_integration                   # AgentLoop mock tests
-cargo test --test telegram_integration                     # Telegram only
+cargo test --test agent_loop_routing_integration           # AgentLoop routing scenarios
+cargo test --test agent_loop_tooling_integration           # AgentLoop tools/streaming scenarios
+cargo test --test telegram_routing_integration             # Telegram routing/error scenarios
+cargo test --test telegram_provider_integration            # Provider-specific Telegram scenarios
+cargo test --test telegram_tools_integration               # Telegram tool-loop scenarios
 cargo test --test live_integration                         # Live E2E (needs API key)
 ```

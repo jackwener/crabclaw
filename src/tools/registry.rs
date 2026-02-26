@@ -500,6 +500,35 @@ mod tests {
     }
 
     #[test]
+    fn execute_file_read_invalid_json_args() {
+        let dir = tempfile::tempdir().unwrap();
+        let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
+        let result = execute_tool("file.read", "not-json", &tape, dir.path());
+        assert!(result.contains("'path' argument is required"));
+    }
+
+    #[test]
+    fn execute_file_write_missing_path_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
+        let result = execute_tool("file.write", r#"{"content":"hello"}"#, &tape, dir.path());
+        assert!(result.contains("'path' argument is required"));
+    }
+
+    #[test]
+    fn execute_file_edit_missing_old_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
+        let result = execute_tool(
+            "file.edit",
+            r#"{"path":"a.txt","new":"x"}"#,
+            &tape,
+            dir.path(),
+        );
+        assert!(result.contains("'old' argument is required"));
+    }
+
+    #[test]
     fn execute_skill_tool_not_found() {
         let dir = tempfile::tempdir().unwrap();
         let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();

@@ -92,13 +92,13 @@ A complete agentic loop executes roughly as follows:
 
 ## 5. Test Architecture
 
-CrabClaw maintains 261 automated tests across four tiers:
+CrabClaw maintains a four-tier automated test architecture:
 
-| Tier | Count | Scope |
-|------|-------|-------|
-| Unit tests (`cargo test --lib`) | 218 | Core logic, config, router, tape, tools, file ops, API types, progressive view |
-| AgentLoop integration (`tests/agent_loop_integration.rs`) | 15 | Full AgentLoop pipeline with mock LLM: tool calling, streaming, routing, file.edit, route_assistant |
-| CLI integration (`tests/cli_run.rs`) | 10 | End-to-end CLI behavior with real binary |
-| Telegram integration (`tests/telegram_integration.rs`) | 18 | Full pipeline via `process_message` with mock LLM API |
+| Tier | Scope |
+|------|-------|
+| Unit tests (`cargo test --lib`) | Core logic, config, router, tape, tools, file ops, API types, progressive view |
+| AgentLoop integration (`tests/agent_loop_routing_integration.rs`, `tests/agent_loop_tooling_integration.rs`) | Full AgentLoop pipeline with mock LLM: routing, tool calling, streaming, and file editing |
+| CLI integration (`tests/cli_run.rs`) | End-to-end CLI behavior with real binary |
+| Telegram integration (`tests/telegram_routing_integration.rs`, `tests/telegram_provider_integration.rs`, `tests/telegram_tools_integration.rs`) | `process_message` pipeline with routing, provider behavior, and tool loops |
 
-Additionally, **10 live E2E tests** (`tests/live_integration.rs`) run against real LLM APIs when `OPENROUTER_API_KEY` is set, covering basic replies, streaming, tool calling, file editing, and AgentLoop-level operations.
+Additionally, **10 live E2E tests** (`tests/live_integration.rs`) run against real LLM APIs when API credentials are configured, covering basic replies, streaming, tool calling, file editing, and AgentLoop-level operations.

@@ -36,5 +36,5 @@
 ## 汇总
 
 - **18 项功能中已完成 15 项**，全部经过自动化测试覆盖。
-- **205 个自动化测试**覆盖所有已完成功能。
+- 自动化测试已覆盖所有已完成功能（unit + AgentLoop + CLI + Telegram，多层测试数量随演进动态增长）。
 - CI 管线（GitHub Actions）在 `ubuntu-latest` + `macos-latest` 全绿。

@@ -92,13 +92,13 @@ src/
 
 ## 5. 测试架构
 
-CrabClaw 维护 261 个自动化测试，分为四层：
+CrabClaw 维护四层自动化测试架构：
 
-| 层级 | 数量 | 范围 |
-|------|------|------|
-| 单元测试 (`cargo test --lib`) | 218 | 核心逻辑、配置、路由、tape、工具、文件操作、API 类型、渐进式视图 |
-| AgentLoop 集成测试 (`tests/agent_loop_integration.rs`) | 15 | 完整 AgentLoop 管线（mock LLM）：工具调用、流式、路由、file.edit、route_assistant |
-| CLI 集成测试 (`tests/cli_run.rs`) | 10 | 端到端 CLI 行为 |
-| Telegram 集成测试 (`tests/telegram_integration.rs`) | 18 | 通过 `process_message` 的全链路管线（mock LLM API） |
+| 层级 | 范围 |
+|------|------|
+| 单元测试 (`cargo test --lib`) | 核心逻辑、配置、路由、tape、工具、文件操作、API 类型、渐进式视图 |
+| AgentLoop 集成测试 (`tests/agent_loop_routing_integration.rs`, `tests/agent_loop_tooling_integration.rs`) | 完整 AgentLoop 管线（mock LLM）：路由、工具调用、流式与文件编辑 |
+| CLI 集成测试 (`tests/cli_run.rs`) | 端到端 CLI 行为 |
+| Telegram 集成测试 (`tests/telegram_routing_integration.rs`, `tests/telegram_provider_integration.rs`, `tests/telegram_tools_integration.rs`) | `process_message` 管线：路由、provider 行为与工具循环 |
 
-另有 **10 个 live E2E 测试** (`tests/live_integration.rs`)，在设置 `OPENROUTER_API_KEY` 时运行，覆盖基本回复、流式、工具调用、文件编辑和 AgentLoop 完整操作。
+另有 **10 个 live E2E 测试** (`tests/live_integration.rs`)，在配置 API 凭据时运行，覆盖基本回复、流式、工具调用、文件编辑和 AgentLoop 完整操作。

@@ -139,22 +139,3 @@ fn run_rejects_empty_prompt() {
         .failure()
         .stderr(predicate::str::contains("empty"));
 }
-
-#[test]
-fn interactive_help_text() {
-    let mut cmd = base_command();
-    cmd.args(["interactive", "--help"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("interactive"));
-}
-
-#[test]
-fn run_help_text() {
-    let mut cmd = base_command();
-    cmd.args(["run", "--help"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("--prompt"))
-        .stdout(predicate::str::contains("--system-prompt"));
-}

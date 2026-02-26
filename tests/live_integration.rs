@@ -14,10 +14,16 @@
 //!
 //! Tests are serialized to avoid hitting rate limits.
 
+mod support;
+
 use crabclaw::channels::telegram::process_message;
 use crabclaw::core::config::{CliConfigOverrides, load_runtime_config};
 use crabclaw::core::utils::safe_truncate;
 use serial_test::serial;
+use support::assertions::{
+    assert_no_error_channel, assert_no_error_loop, assert_non_empty_channel_output,
+    assert_non_empty_loop_output,
+};
 use tempfile::TempDir;
 
 /// UTF-8-safe preview of a string for debug output.
@@ -81,15 +87,7 @@ async fn live_model_replies_to_simple_message() {
     )
     .await;
 
-    assert!(
-        response.error.is_none(),
-        "Unexpected error: {:?}",
-        response.error
-    );
-    assert!(
-        response.assistant_output.is_some(),
-        "Expected a reply from model"
-    );
+    assert_non_empty_channel_output(&response);
     let output = response.assistant_output.unwrap();
     println!("[live_chat] model replied: {}", preview(&output, 200));
     assert!(!output.is_empty(), "Reply should not be empty");
@@ -170,11 +168,7 @@ async fn live_tool_call_reads_file() {
     )
     .await;
 
-    assert!(
-        response.error.is_none(),
-        "Unexpected error: {:?}",
-        response.error
-    );
+    assert_no_error_channel(&response);
     let output = response.assistant_output.unwrap_or_default();
     println!("[live_file_read] model replied: {}", preview(&output, 300));
     assert!(
@@ -203,11 +197,7 @@ async fn live_tool_call_shell_exec() {
     )
     .await;
 
-    assert!(
-        response.error.is_none(),
-        "Unexpected error: {:?}",
-        response.error
-    );
+    assert_no_error_channel(&response);
     let output = response.assistant_output.unwrap_or_default();
     println!("[live_shell] model replied: {}", preview(&output, 300));
     assert!(
@@ -344,15 +334,7 @@ async fn live_agent_loop_basic_reply() {
 
     let result = agent.handle_input("Say exactly: AGENT_LOOP_OK").await;
 
-    assert!(
-        result.error.is_none(),
-        "Unexpected error: {:?}",
-        result.error
-    );
-    assert!(
-        result.assistant_output.is_some(),
-        "Expected a reply from model"
-    );
+    assert_non_empty_loop_output(&result);
     let output = result.assistant_output.unwrap();
     println!("[live_agent_loop_basic] reply: {}", preview(&output, 200));
     assert!(!output.is_empty(), "Reply should not be empty");
@@ -380,11 +362,7 @@ async fn live_agent_loop_streaming() {
         })
         .await;
 
-    assert!(
-        result.error.is_none(),
-        "Unexpected error: {:?}",
-        result.error
-    );
+    assert_no_error_loop(&result);
     println!(
         "[live_agent_loop_stream] {} tokens collected, content: {}",
         token_count,

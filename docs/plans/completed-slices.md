@@ -154,7 +154,7 @@
 
 ## 测试汇总
 
-- **S0–S12 总计**：261 tests（218 unit + 15 AgentLoop integration + 10 CLI integration + 18 Telegram integration）
+- **S0–S12 总计**：自动化测试覆盖 unit + AgentLoop integration + CLI integration + Telegram integration（数量随演进动态增长）
 - 另有 10 个 live E2E 测试（需 API Key）
 - 所有 `cargo fmt` / `clippy -D warnings` / `cargo test` 通过
 - GitHub Actions CI 在 `ubuntu-latest` + `macos-latest` 全绿

@@ -42,6 +42,6 @@
 ## Summary
 
 - **21 of 24** features implemented and tested.
-- **261 automated tests** covering all completed features (218 unit + 15 AgentLoop + 10 CLI + 18 Telegram).
+- Automated tests cover all completed features across unit + AgentLoop + CLI + Telegram layers (exact counts evolve with ongoing development).
 - **10 live E2E tests** with real API calls.
 - CI pipeline (GitHub Actions) is green on `ubuntu-latest` + `macos-latest`.

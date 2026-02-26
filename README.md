@@ -134,12 +134,32 @@ The project version is 0.1.0...
 
 ## Development
 
+### Setup
+
+```bash
+# Enable pre-commit hook (runs cargo fmt + clippy before each commit)
+git config core.hooksPath .githooks
+```
+
+### Commands
+
 ```bash
 cargo test               # Run all tests (unit + integration + live if configured)
 cargo clippy             # Lint check
 cargo fmt                # Format
 ./scripts/smoke-test.sh  # Full verification (build + clippy + tests + live API)
 ```
+
+### Test Suites
+
+| Suite | Command | Description |
+|-------|---------|-------------|
+| Unit tests | `cargo test --lib` | All unit tests |
+| CLI | `cargo test --test cli_run` | CLI flag parsing, dry-run |
+| AgentLoop | `cargo test --test agent_loop_*` | Routing, tool calling |
+| Telegram | `cargo test --test telegram_*` | Channel routing, providers |
+| OpenAI-compatible | `cargo test --test openai_provider_integration` | Reply, tool call, error, rate limit |
+| Live E2E | `cargo test --test live_integration` | Requires `API_KEY` in `.env.local` |
 
 ## Documentation
 

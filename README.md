@@ -23,10 +23,14 @@ CrabClaw is an OpenClaw-compatible agentic coding toolchain written in Rust.
 ## Quick Start
 
 1. Install stable Rust toolchain.
-2. Copy `.env.example` to `.env.local` and configure:
+2. Authenticate (choose one):
    ```bash
+   # Option A: API Key
    cp .env.example .env.local
-   # Edit .env.local — set OPENROUTER_API_KEY (or ANTHROPIC_API_KEY)
+   # Edit .env.local — set API_KEY, BASE_URL, MODEL
+
+   # Option B: OAuth (use your ChatGPT Plus/Pro subscription)
+   cargo run -- auth login
    ```
 3. Build and verify:
    ```bash
@@ -34,9 +38,10 @@ CrabClaw is an OpenClaw-compatible agentic coding toolchain written in Rust.
    ```
 4. Choose your mode:
    ```bash
-   cargo run -- repl                # Interactive REPL
-   cargo run -- run --prompt "..."  # One-shot CLI
-   cargo run -- serve               # Telegram bot (requires TELEGRAM_BOT_TOKEN)
+   cargo run -- interactive          # Interactive REPL
+   cargo run -- run --prompt "..."   # One-shot CLI
+   cargo run -- serve                # Telegram bot (requires TELEGRAM_BOT_TOKEN)
+   cargo run -- auth status          # Check auth status
    ```
 
 ## Usage

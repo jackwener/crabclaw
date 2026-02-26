@@ -69,17 +69,11 @@ pub fn read_file(workspace: &Path, file_path: &str) -> String {
                     // Truncate large files to prevent context overflow
                     const MAX_CHARS: usize = 50_000;
                     if content.len() > MAX_CHARS {
-                        // Find a safe char boundary at or before MAX_CHARS
-                        let safe_end = content
-                            .char_indices()
-                            .map(|(i, _)| i)
-                            .take_while(|&i| i <= MAX_CHARS)
-                            .last()
-                            .unwrap_or(MAX_CHARS.min(content.len()));
+                        let truncated = crate::core::utils::safe_truncate(&content, MAX_CHARS);
                         format!(
                             "{}\n\n[... truncated, showing first {} of {} bytes]",
-                            &content[..safe_end],
-                            safe_end,
+                            truncated,
+                            truncated.len(),
                             content.len()
                         )
                     } else {
@@ -361,13 +355,7 @@ fn search_file(workspace: &Path, file: &Path, query: &str, results: &mut Vec<Str
         if line.to_lowercase().contains(query) {
             let trimmed = line.trim();
             let display = if trimmed.len() > 120 {
-                let safe = trimmed
-                    .char_indices()
-                    .map(|(i, _)| i)
-                    .take_while(|&i| i <= 117)
-                    .last()
-                    .unwrap_or(0);
-                format!("{}...", &trimmed[..safe])
+                format!("{}...", crate::core::utils::safe_truncate(trimmed, 117))
             } else {
                 trimmed.to_string()
             };
@@ -626,5 +614,41 @@ mod tests {
         assert!(result.contains("1 occurrence"));
         let content = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
         assert_eq!(content, "line1\nreplaced\n");
+    }
+
+    // ── Multi-byte / UTF-8 edge case tests ──────────────────────────
+
+    #[test]
+    fn search_truncates_long_chinese_line_safely() {
+        let dir = tempdir().unwrap();
+        // Create a line with >120 bytes of Chinese text (each char = 3 bytes)
+        // 50 chars × 3 = 150 bytes > 120
+        let long_line = "你".repeat(50); // 150 bytes
+        std::fs::write(dir.path().join("cn.txt"), &long_line).unwrap();
+
+        // Should not panic when truncating at byte 117
+        let result = search_files(dir.path(), "你", "");
+        assert!(result.contains("cn.txt"));
+        assert!(result.contains("...")); // truncated
+    }
+
+    #[test]
+    fn edit_chinese_content() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("cn.txt"), "你好世界").unwrap();
+        let result = edit_file(dir.path(), "cn.txt", "世界", "CrabClaw", false);
+        assert!(result.contains("1 occurrence"));
+        let content = std::fs::read_to_string(dir.path().join("cn.txt")).unwrap();
+        assert_eq!(content, "你好CrabClaw");
+    }
+
+    #[test]
+    fn edit_emoji_content() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("em.txt"), "🦀 is cool 🦀").unwrap();
+        let result = edit_file(dir.path(), "em.txt", "🦀 is cool", "🦞 is better", false);
+        assert!(result.contains("1 occurrence"));
+        let content = std::fs::read_to_string(dir.path().join("em.txt")).unwrap();
+        assert_eq!(content, "🦞 is better 🦀");
     }
 }

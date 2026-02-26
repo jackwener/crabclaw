@@ -643,3 +643,80 @@ async fn agent_loop_route_assistant_no_commands_passthrough() {
         Some("Just a normal response with no commands.")
     );
 }
+
+// ============================================================================
+// Test 16: Chinese / multi-byte content in model response
+// ============================================================================
+
+#[tokio::test]
+async fn agent_loop_chinese_response() {
+    let mut server = mockito::Server::new_async().await;
+
+    // Model returns Chinese text — this catches the UTF-8 slicing bug that
+    // previously caused a panic in content_preview when the 100-byte boundary
+    // fell inside a multi-byte Chinese character.
+    let chinese = "你好！有什么我可以帮你的吗？无论是代码相关的问题、文件操作，还是其他技术问题，我都可以协助你。";
+    server
+        .mock("POST", "/chat/completions")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(text_response(chinese))
+        .create_async()
+        .await;
+
+    let config = test_config(&server.url());
+    let workspace = TempDir::new().unwrap();
+
+    let mut agent = AgentLoop::open(&config, workspace.path(), "test_chinese").unwrap();
+    let result = agent.handle_input("你好").await;
+
+    assert!(
+        result.error.is_none(),
+        "unexpected error: {:?}",
+        result.error
+    );
+    assert_eq!(result.assistant_output.as_deref(), Some(chinese));
+}
+
+// ============================================================================
+// Test 17: file.edit with Chinese content via tool calling
+// ============================================================================
+
+#[tokio::test]
+async fn agent_loop_file_edit_chinese() {
+    let mut server = mockito::Server::new_async().await;
+
+    let workspace = TempDir::new().unwrap();
+    std::fs::write(workspace.path().join("doc.txt"), "你好世界").unwrap();
+
+    let args = r#"{"path": "doc.txt", "old": "世界", "new": "CrabClaw"}"#;
+    server
+        .mock("POST", "/chat/completions")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(tool_call_response("file.edit", "edit_cn", args))
+        .create_async()
+        .await;
+
+    server
+        .mock("POST", "/chat/completions")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(text_response("已替换完成。"))
+        .create_async()
+        .await;
+
+    let config = test_config(&server.url());
+    let mut agent = AgentLoop::open(&config, workspace.path(), "test_edit_cn").unwrap();
+    let result = agent.handle_input("把世界改成CrabClaw").await;
+
+    assert!(
+        result.error.is_none(),
+        "unexpected error: {:?}",
+        result.error
+    );
+
+    let content = std::fs::read_to_string(workspace.path().join("doc.txt")).unwrap();
+    assert_eq!(content, "你好CrabClaw");
+    assert_eq!(result.assistant_output.as_deref(), Some("已替换完成。"));
+}

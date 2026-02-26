@@ -1,3 +1,4 @@
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use tracing::{debug, warn};
@@ -9,6 +10,19 @@ use crate::llm::api_types::{
 };
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
+
+/// Global shared HTTP client for connection pooling across all requests.
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn get_http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+            .pool_max_idle_per_host(5)
+            .build()
+            .expect("failed to build HTTP client")
+    })
+}
 
 /// Non-standard error response (e.g. GLM returns HTTP 200 with error JSON).
 #[derive(Debug, serde::Deserialize)]
@@ -81,10 +95,7 @@ async fn send_anthropic_request(
         tools,
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| CrabClawError::Network(format!("failed to build HTTP client: {e}")))?;
+    let client = get_http_client();
 
     let response = client
         .post(&url)
@@ -160,10 +171,7 @@ async fn send_anthropic_request_stream(
         tools,
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| CrabClawError::Network(format!("failed to build HTTP client: {e}")))?;
+    let client = get_http_client();
 
     let mut json_val = serde_json::to_value(&anth_req).map_err(CrabClawError::from)?;
     if let Some(obj) = json_val.as_object_mut() {
@@ -306,10 +314,7 @@ async fn send_openai_request(config: &AppConfig, request: &ChatRequest) -> Resul
     let url = format!("{}/chat/completions", config.api_base.trim_end_matches('/'));
     debug!(url = %url, model = %request.model, "sending openai chat request");
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| CrabClawError::Network(format!("failed to build HTTP client: {e}")))?;
+    let client = get_http_client();
 
     let response = client
         .post(&url)
@@ -366,10 +371,7 @@ async fn send_openai_request_stream(
     let url = format!("{}/chat/completions", config.api_base.trim_end_matches('/'));
     debug!(url = %url, model = %request.model, "sending openai chat streaming request");
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| CrabClawError::Network(format!("failed to build HTTP client: {e}")))?;
+    let client = get_http_client();
 
     // We must pass string raw json to inject "stream": true if not present in ChatRequest.
     // Let's just serialize it and inject.
@@ -519,9 +521,7 @@ fn handle_error_response(status: reqwest::StatusCode, body_text: &str) -> Result
         }
         429 => {
             warn!(status = %status, "rate limited");
-            Err(CrabClawError::Api(format!(
-                "rate limited (HTTP {status}): {detail}"
-            )))
+            Err(CrabClawError::RateLimit(format!("HTTP {status}: {detail}")))
         }
         s if (500..600).contains(&s) => {
             warn!(status = %status, "server error");
@@ -632,8 +632,8 @@ mod tests {
 
         let err = send_chat_request(&config, &request).await.unwrap_err();
         match err {
-            CrabClawError::Api(msg) => assert!(msg.contains("rate limited"), "msg: {msg}"),
-            other => panic!("expected Api error, got: {other}"),
+            CrabClawError::RateLimit(msg) => assert!(msg.contains("429"), "msg: {msg}"),
+            other => panic!("expected RateLimit error, got: {other}"),
         }
         mock.assert_async().await;
     }

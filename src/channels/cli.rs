@@ -30,12 +30,9 @@ enum Commands {
     Serve(ServeArgs),
 }
 
+/// Common CLI arguments shared across all subcommands.
 #[derive(Debug, Args)]
-struct RunArgs {
-    #[arg(long)]
-    prompt: Option<String>,
-    #[arg(long = "prompt-file")]
-    prompt_file: Option<PathBuf>,
+struct CommonArgs {
     #[arg(long)]
     profile: Option<String>,
     #[arg(long = "api-key")]
@@ -46,36 +43,42 @@ struct RunArgs {
     model: Option<String>,
     #[arg(long = "system-prompt")]
     system_prompt: Option<String>,
+}
+
+impl CommonArgs {
+    fn to_overrides(&self) -> CliConfigOverrides {
+        CliConfigOverrides {
+            api_key: self.api_key.clone(),
+            api_base: self.api_base.clone(),
+            model: self.model.clone(),
+            system_prompt: self.system_prompt.clone(),
+            max_context_messages: None,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+struct RunArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+    #[arg(long)]
+    prompt: Option<String>,
+    #[arg(long = "prompt-file")]
+    prompt_file: Option<PathBuf>,
     #[arg(long, default_value_t = false)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
 struct InteractiveArgs {
-    #[arg(long)]
-    profile: Option<String>,
-    #[arg(long = "api-key")]
-    api_key: Option<String>,
-    #[arg(long = "api-base")]
-    api_base: Option<String>,
-    #[arg(long)]
-    model: Option<String>,
-    #[arg(long = "system-prompt")]
-    system_prompt: Option<String>,
+    #[command(flatten)]
+    common: CommonArgs,
 }
 
 #[derive(Debug, Args)]
 struct ServeArgs {
-    #[arg(long)]
-    profile: Option<String>,
-    #[arg(long = "api-key")]
-    api_key: Option<String>,
-    #[arg(long = "api-base")]
-    api_base: Option<String>,
-    #[arg(long)]
-    model: Option<String>,
-    #[arg(long = "system-prompt")]
-    system_prompt: Option<String>,
+    #[command(flatten)]
+    common: CommonArgs,
 }
 
 #[derive(Debug, Serialize)]
@@ -108,14 +111,8 @@ fn dispatch(cli: Cli) -> Result<()> {
 
 fn run_command(args: RunArgs) -> Result<()> {
     let workspace = std::env::current_dir().map_err(CrabClawError::Io)?;
-    let overrides = CliConfigOverrides {
-        api_key: args.api_key,
-        api_base: args.api_base,
-        model: args.model,
-        system_prompt: args.system_prompt,
-        max_context_messages: None,
-    };
-    let config = load_runtime_config(&workspace, args.profile.as_deref(), &overrides)?;
+    let overrides = args.common.to_overrides();
+    let config = load_runtime_config(&workspace, args.common.profile.as_deref(), &overrides)?;
     let prompt = resolve_prompt(args.prompt, args.prompt_file)?;
 
     if args.dry_run {
@@ -223,27 +220,15 @@ fn run_command(args: RunArgs) -> Result<()> {
 
 fn interactive_command(args: InteractiveArgs) -> Result<()> {
     let workspace = std::env::current_dir().map_err(CrabClawError::Io)?;
-    let overrides = CliConfigOverrides {
-        api_key: args.api_key,
-        api_base: args.api_base,
-        model: args.model,
-        system_prompt: args.system_prompt,
-        max_context_messages: None,
-    };
-    let config = load_runtime_config(&workspace, args.profile.as_deref(), &overrides)?;
+    let overrides = args.common.to_overrides();
+    let config = load_runtime_config(&workspace, args.common.profile.as_deref(), &overrides)?;
     crate::channels::repl::run_interactive(&config, &workspace)
 }
 
 fn serve_command(args: ServeArgs) -> Result<()> {
     let workspace = std::env::current_dir().map_err(CrabClawError::Io)?;
-    let overrides = CliConfigOverrides {
-        api_key: args.api_key,
-        api_base: args.api_base,
-        model: args.model,
-        system_prompt: args.system_prompt,
-        max_context_messages: None,
-    };
-    let config = load_runtime_config(&workspace, args.profile.as_deref(), &overrides)?;
+    let overrides = args.common.to_overrides();
+    let config = load_runtime_config(&workspace, args.common.profile.as_deref(), &overrides)?;
     let config = Arc::new(config);
 
     let rt = tokio::runtime::Builder::new_multi_thread()

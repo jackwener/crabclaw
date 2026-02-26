@@ -16,7 +16,14 @@ serde = { version = "1.0.218", features = ["derive"] }
 serde_json = "1.0.140"
 teloxide = { version = "0.13", features = ["macros"] }
 thiserror = "2.0.12"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "signal",
+    "process",
+    "time",
+    "io-util",
+] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

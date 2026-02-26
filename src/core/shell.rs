@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 /// Result of executing a shell command.
@@ -14,25 +13,27 @@ pub struct ShellResult {
 /// Default timeout for shell commands (30 seconds).
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
-/// Execute an arbitrary shell command in the given workspace directory.
+/// Execute an arbitrary shell command asynchronously.
 ///
 /// Uses `/bin/sh -c` to run the command. Captures stdout, stderr, and exit code.
 /// Enforces a default timeout of 30 seconds.
-pub fn execute_shell(cmd_line: &str, workspace: &Path) -> ShellResult {
-    execute_shell_with_timeout(
+/// Preferred in async contexts (channels, tool calling loop).
+pub async fn execute_shell_async(cmd_line: &str, workspace: &Path) -> ShellResult {
+    execute_shell_async_with_timeout(
         cmd_line,
         workspace,
         Duration::from_secs(DEFAULT_TIMEOUT_SECS),
     )
+    .await
 }
 
-/// Execute a shell command with a custom timeout.
-pub fn execute_shell_with_timeout(
+/// Execute a shell command asynchronously with a custom timeout.
+pub async fn execute_shell_async_with_timeout(
     cmd_line: &str,
     workspace: &Path,
     timeout: Duration,
 ) -> ShellResult {
-    let mut child = match Command::new("/bin/sh")
+    let mut child = match tokio::process::Command::new("/bin/sh")
         .arg("-c")
         .arg(cmd_line)
         .current_dir(workspace)
@@ -51,15 +52,108 @@ pub fn execute_shell_with_timeout(
         }
     };
 
-    // Wait with timeout using a simple polling approach.
+    // Take stdout/stderr handles before waiting so we retain ownership of `child` for kill.
+    let stdout_handle = child.stdout.take();
+    let stderr_handle = child.stderr.take();
+
+    match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(Ok(status)) => {
+            // Process exited — read captured output.
+            let stdout = if let Some(mut out) = stdout_handle {
+                let mut buf = Vec::new();
+                tokio::io::AsyncReadExt::read_to_end(&mut out, &mut buf)
+                    .await
+                    .ok();
+                String::from_utf8_lossy(&buf).to_string()
+            } else {
+                String::new()
+            };
+            let stderr = if let Some(mut err) = stderr_handle {
+                let mut buf = Vec::new();
+                tokio::io::AsyncReadExt::read_to_end(&mut err, &mut buf)
+                    .await
+                    .ok();
+                String::from_utf8_lossy(&buf).to_string()
+            } else {
+                String::new()
+            };
+            ShellResult {
+                stdout,
+                stderr,
+                exit_code: status.code().unwrap_or(-1),
+                timed_out: false,
+            }
+        }
+        Ok(Err(e)) => ShellResult {
+            stdout: String::new(),
+            stderr: format!("error waiting for process: {e}"),
+            exit_code: -1,
+            timed_out: false,
+        },
+        Err(_) => {
+            // Timeout expired — kill the child process.
+            let _ = child.kill().await;
+            ShellResult {
+                stdout: String::new(),
+                stderr: format!("command timed out after {}s", timeout.as_secs()),
+                exit_code: -1,
+                timed_out: true,
+            }
+        }
+    }
+}
+
+/// Execute an arbitrary shell command synchronously.
+///
+/// Uses `/bin/sh -c` to run the command. Captures stdout, stderr, and exit code.
+/// Enforces a default timeout of 30 seconds.
+/// For use in sync contexts (router command dispatch).
+pub fn execute_shell(cmd_line: &str, workspace: &Path) -> ShellResult {
+    execute_shell_with_timeout(
+        cmd_line,
+        workspace,
+        Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+    )
+}
+
+/// Execute a shell command synchronously with a custom timeout.
+pub fn execute_shell_with_timeout(
+    cmd_line: &str,
+    workspace: &Path,
+    timeout: Duration,
+) -> ShellResult {
+    let mut child = match std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(cmd_line)
+        .current_dir(workspace)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => {
+            return ShellResult {
+                stdout: String::new(),
+                stderr: format!("failed to spawn shell: {e}"),
+                exit_code: -1,
+                timed_out: false,
+            };
+        }
+    };
+
+    // Wait with timeout using polling.
     let start = std::time::Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(_status)) => {
                 // Process finished; collect output.
                 let output = child.wait_with_output().unwrap_or_else(|e| {
-                    // Shouldn't happen since child already exited but handle gracefully.
-                    panic!("unexpected error collecting output: {e}");
+                    // Child already exited — should not fail, but handle gracefully.
+                    std::process::Output {
+                        status: std::process::ExitStatus::default(),
+                        stdout: Vec::new(),
+                        stderr: format!("unexpected error collecting output: {e}").into_bytes(),
+                    }
                 });
                 return ShellResult {
                     stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -69,7 +163,6 @@ pub fn execute_shell_with_timeout(
                 };
             }
             Ok(None) => {
-                // Still running, check timeout.
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait(); // Reap the process.
@@ -124,6 +217,30 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    // --- Async tests ---
+
+    #[tokio::test]
+    async fn async_successful_echo() {
+        let dir = tempdir().unwrap();
+        let result = execute_shell_async("echo hello", dir.path()).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "hello");
+        assert!(!result.timed_out);
+    }
+
+    #[tokio::test]
+    async fn async_timeout_kills_process() {
+        let dir = tempdir().unwrap();
+        let result =
+            execute_shell_async_with_timeout("sleep 60", dir.path(), Duration::from_millis(200))
+                .await;
+        assert!(result.timed_out);
+        assert_eq!(result.exit_code, -1);
+        assert!(result.stderr.contains("timed out"));
+    }
+
+    // --- Sync tests ---
+
     #[test]
     fn successful_echo_command() {
         let dir = tempdir().unwrap();
@@ -174,7 +291,6 @@ mod tests {
         let dir = tempdir().unwrap();
         let result = execute_shell("pwd", dir.path());
         assert_eq!(result.exit_code, 0);
-        // The output should contain the temp directory path.
         let canonical = dir.path().canonicalize().unwrap();
         let output_path = std::path::PathBuf::from(result.stdout.trim())
             .canonicalize()

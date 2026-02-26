@@ -39,7 +39,7 @@ impl ChannelManager {
     pub async fn run(&mut self) -> Result<()> {
         if self.channels.is_empty() {
             return Err(crate::core::error::CrabClawError::Config(
-                "no channels enabled; set BUB_TELEGRAM_TOKEN to enable Telegram".to_string(),
+                "no channels enabled; set TELEGRAM_TOKEN to enable Telegram".to_string(),
             ));
         }
 

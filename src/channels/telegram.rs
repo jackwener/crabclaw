@@ -321,8 +321,16 @@ fn split_message(text: &str, max_len: usize) -> Vec<String> {
             break;
         }
 
-        // Try to split at a newline within limit
-        let split_at = remaining[..max_len].rfind('\n').unwrap_or(max_len);
+        // Find a safe UTF-8 boundary at or before max_len
+        let safe_end = remaining
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= max_len)
+            .last()
+            .unwrap_or(max_len.min(remaining.len()));
+
+        // Try to split at a newline within the safe range
+        let split_at = remaining[..safe_end].rfind('\n').unwrap_or(safe_end);
 
         chunks.push(remaining[..split_at].to_string());
         remaining = remaining[split_at..].trim_start_matches('\n');

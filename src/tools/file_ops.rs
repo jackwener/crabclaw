@@ -69,10 +69,17 @@ pub fn read_file(workspace: &Path, file_path: &str) -> String {
                     // Truncate large files to prevent context overflow
                     const MAX_CHARS: usize = 50_000;
                     if content.len() > MAX_CHARS {
+                        // Find a safe char boundary at or before MAX_CHARS
+                        let safe_end = content
+                            .char_indices()
+                            .map(|(i, _)| i)
+                            .take_while(|&i| i <= MAX_CHARS)
+                            .last()
+                            .unwrap_or(MAX_CHARS.min(content.len()));
                         format!(
-                            "{}\n\n[... truncated, showing first {} of {} chars]",
-                            &content[..MAX_CHARS],
-                            MAX_CHARS,
+                            "{}\n\n[... truncated, showing first {} of {} bytes]",
+                            &content[..safe_end],
+                            safe_end,
                             content.len()
                         )
                     } else {
@@ -184,6 +191,7 @@ pub fn search_files(workspace: &Path, query: &str, path: &str) -> String {
     let query_lower = query.to_lowercase();
     let mut results = Vec::new();
     const MAX_RESULTS: usize = 50;
+    const MAX_DEPTH: usize = 10;
 
     search_recursive(
         workspace,
@@ -191,6 +199,8 @@ pub fn search_files(workspace: &Path, query: &str, path: &str) -> String {
         &query_lower,
         &mut results,
         MAX_RESULTS,
+        0,
+        MAX_DEPTH,
     );
 
     if results.is_empty() {
@@ -228,8 +238,10 @@ fn search_recursive(
     query: &str,
     results: &mut Vec<String>,
     max: usize,
+    depth: usize,
+    max_depth: usize,
 ) {
-    if results.len() >= max {
+    if results.len() >= max || depth > max_depth {
         return;
     }
 
@@ -261,7 +273,7 @@ fn search_recursive(
         }
 
         if path.is_dir() {
-            search_recursive(workspace, &path, query, results, max);
+            search_recursive(workspace, &path, query, results, max, depth + 1, max_depth);
         } else if path.is_file() {
             search_file(workspace, &path, query, results, max);
         }

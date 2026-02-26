@@ -106,7 +106,7 @@ pub fn build_messages(
     if let Some(prompt) = system_prompt {
         let trimmed = prompt.trim();
         if !trimmed.is_empty() {
-            messages.push(Message::system(prompt));
+            messages.push(Message::system(trimmed));
         }
     }
 

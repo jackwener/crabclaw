@@ -87,11 +87,6 @@ pub fn builtin_registry() -> ToolRegistry {
         "Show tape session info (entry count, file path)",
         "builtin",
     );
-    registry.register(
-        "tape.reset",
-        "Reset the tape session and clear conversation history",
-        "builtin",
-    );
     registry.register("help", "Show available commands", "builtin");
     registry.register("tools", "List all registered tools", "builtin");
     registry.register("skills", "List discovered skills from workspace", "builtin");
@@ -283,10 +278,10 @@ pub fn execute_tool(
         "shell.exec" => {
             // Parse the command argument from the JSON args string.
             let command = match serde_json::from_str::<serde_json::Value>(args) {
-                Ok(v) => v["command"]
-                    .as_str()
-                    .unwrap_or("echo 'missing command argument'")
-                    .to_string(),
+                Ok(v) => match v["command"].as_str() {
+                    Some(cmd) => cmd.to_string(),
+                    None => return "Error: 'command' argument is required.".to_string(),
+                },
                 Err(_) => {
                     // If args is not JSON, treat it as a raw command string.
                     if args.trim().is_empty() {
@@ -415,11 +410,10 @@ mod tests {
     fn builtin_registry_has_expected_tools() {
         let reg = builtin_registry();
         assert!(reg.has("tape.info"));
-        assert!(reg.has("tape.reset"));
         assert!(reg.has("help"));
         assert!(reg.has("tools"));
         assert!(reg.has("skills"));
-        assert!(reg.len() >= 5);
+        assert!(reg.len() >= 4);
     }
 
     #[test]

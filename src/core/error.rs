@@ -16,6 +16,8 @@ pub enum CrabClawError {
     Auth(String),
     #[error("api error: {0}")]
     Api(String),
+    #[error("rate limited: {0}")]
+    RateLimit(String),
     #[error("http error: {0}")]
     Http(#[from] reqwest::Error),
 }

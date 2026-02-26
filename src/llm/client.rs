@@ -45,7 +45,9 @@ pub async fn send_chat_request(config: &AppConfig, request: &ChatRequest) -> Res
     let mut delay_ms = INITIAL_RETRY_DELAY_MS;
 
     for attempt in 0..=MAX_RETRIES {
-        let result = if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {
+        let result = if let Some(codex_model) = request.model.strip_prefix("codex:") {
+            crate::llm::codex::send_codex_request(codex_model, request, None).await
+        } else if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {
             send_anthropic_request(config, request, anthropic_model).await
         } else {
             send_openai_request(config, request).await
@@ -82,6 +84,27 @@ pub async fn send_chat_request_stream(
     let mut delay_ms = INITIAL_RETRY_DELAY_MS;
 
     for attempt in 0..=MAX_RETRIES {
+        // Codex models use the Responses API; wrap in a non-streaming adapter
+        if let Some(codex_model) = request.model.strip_prefix("codex:") {
+            let result = crate::llm::codex::send_codex_request(codex_model, request, None).await;
+            let (tx, rx) = mpsc::unbounded_channel();
+            match result {
+                Ok(resp) => {
+                    let text = resp
+                        .choices
+                        .first()
+                        .map(|c| c.message.content.clone())
+                        .unwrap_or_default();
+                    let _ = tx.send(Ok(StreamChunk::Content(text)));
+                    let _ = tx.send(Ok(StreamChunk::Done));
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                }
+            }
+            return Ok(rx);
+        }
+
         let result = if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {
             send_anthropic_request_stream(config, request, anthropic_model).await
         } else {

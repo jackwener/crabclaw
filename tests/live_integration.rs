@@ -272,3 +272,65 @@ async fn live_multi_turn_write_then_read() {
         &output[..output.len().min(300)]
     );
 }
+
+// ============================================================================
+// Diagnostic: Uses REAL project workspace (like Telegram does) to write a file
+// in a temp subdir — exactly replicating the TG scenario.
+// ============================================================================
+
+#[tokio::test]
+#[serial]
+async fn live_diagnostic_project_workspace_tool_call() {
+    let config = require_live_config!();
+
+    // Use real project dir as workspace — same as TG bot does
+    let workspace = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // Use a unique session to avoid stale tape context
+    let session = &format!(
+        "diag_test:{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
+
+    let target_file = "crabclaw_diag_test.txt";
+    let prompt = format!(
+        "Use the file.write tool to create a file called '{}' with the content 'DIAG_OK'. \
+         You MUST use the file.write tool. Do NOT just reply with text.",
+        target_file
+    );
+
+    let response = send_live_in(&prompt, &config, &workspace, session).await;
+
+    println!(
+        "[diag] assistant_output: {:?}",
+        response
+            .assistant_output
+            .as_deref()
+            .map(|s| &s[..s.len().min(300)])
+    );
+    if let Some(err) = &response.error {
+        println!("[diag] error: {}", err);
+    }
+
+    let file_path = workspace.join(target_file);
+    assert!(
+        file_path.exists(),
+        "DIAGNOSTIC FAILED: '{}' was not created. Model likely did NOT use tool calling.\n\
+         Response: {:?}",
+        target_file,
+        response.assistant_output
+    );
+
+    let content = std::fs::read_to_string(&file_path).unwrap();
+    println!("[diag] file content: {}", content);
+    // Clean up
+    std::fs::remove_file(&file_path).ok();
+    assert!(
+        content.contains("DIAG_OK"),
+        "Expected 'DIAG_OK' in file, got: {}",
+        content
+    );
+}

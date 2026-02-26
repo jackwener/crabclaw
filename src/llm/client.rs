@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::core::config::AppConfig;
 use crate::core::error::{CrabClawError, Result};
@@ -95,6 +95,14 @@ async fn send_anthropic_request(
         tools,
     };
 
+    info!(
+        model = %anth_req.model,
+        message_count = anth_req.messages.len(),
+        tool_count = anth_req.tools.as_ref().map(|t| t.len()).unwrap_or(0),
+        has_system = anth_req.system.is_some(),
+        "anthropic.request"
+    );
+
     let client = get_http_client();
 
     let response = client
@@ -127,7 +135,17 @@ async fn send_anthropic_request(
 
     if status.is_success() {
         let anth_resp: crate::llm::api_types::AnthropicResponse = serde_json::from_str(&body)?;
-        return Ok(anth_resp.into_chat_response());
+        let chat_resp = anth_resp.into_chat_response();
+        let has_tool_calls = chat_resp.tool_calls().is_some();
+        let content_preview = chat_resp
+            .assistant_content()
+            .map(|c| &c[..c.len().min(100)]);
+        info!(
+            has_tool_calls = has_tool_calls,
+            content_preview = ?content_preview,
+            "anthropic.response"
+        );
+        return Ok(chat_resp);
     }
 
     handle_error_response(status, &body)

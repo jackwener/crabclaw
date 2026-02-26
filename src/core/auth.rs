@@ -112,6 +112,11 @@ fn generate_code_verifier() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
+fn generate_state() -> String {
+    let bytes: Vec<u8> = (0..16).map(|_| rand::random::<u8>()).collect();
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
 fn generate_code_challenge(verifier: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(verifier.as_bytes());
@@ -131,15 +136,17 @@ fn generate_code_challenge(verifier: &str) -> String {
 pub async fn login() -> Result<TokenData> {
     let code_verifier = generate_code_verifier();
     let code_challenge = generate_code_challenge(&code_verifier);
+    let state = generate_state();
 
     // Build authorization URL
     let auth_url = format!(
-        "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256",
+        "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
         AUTH_ENDPOINT,
         CLIENT_ID,
         urlencoding(REDIRECT_URI),
         urlencoding(SCOPES),
         code_challenge,
+        state,
     );
 
     // Start local server to receive callback
@@ -160,7 +167,7 @@ pub async fn login() -> Result<TokenData> {
     }
 
     // Wait for callback with auth code
-    let auth_code = wait_for_callback(listener).await?;
+    let auth_code = wait_for_callback(listener, &state).await?;
     info!("received auth code, exchanging for tokens");
 
     // Exchange code for tokens
@@ -172,7 +179,10 @@ pub async fn login() -> Result<TokenData> {
 }
 
 /// Wait for the OAuth callback on the local server.
-async fn wait_for_callback(listener: tokio::net::TcpListener) -> Result<String> {
+async fn wait_for_callback(
+    listener: tokio::net::TcpListener,
+    expected_state: &str,
+) -> Result<String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let (mut stream, _) = listener
@@ -188,9 +198,38 @@ async fn wait_for_callback(listener: tokio::net::TcpListener) -> Result<String> 
 
     let request = String::from_utf8_lossy(&buf[..n]);
 
-    // Extract code from GET /auth/callback?code=xxx
+    // Check for error response first
+    if let Some(error) = extract_query_param(&request, "error") {
+        let desc = extract_query_param(&request, "error_description")
+            .map(|d| d.replace('+', " "))
+            .unwrap_or_default();
+
+        let html =
+            format!("<html><body><h2>❌ Login failed</h2><p>{error}: {desc}</p></body></html>");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+            html.len(),
+            html
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
+
+        return Err(CrabClawError::Auth(format!(
+            "OAuth error: {error} — {desc}"
+        )));
+    }
+
+    // Extract code
     let code = extract_query_param(&request, "code")
         .ok_or_else(|| CrabClawError::Auth("no authorization code in callback".to_string()))?;
+
+    // Verify state for CSRF protection
+    if let Some(returned_state) = extract_query_param(&request, "state") {
+        if returned_state != expected_state {
+            return Err(CrabClawError::Auth(
+                "state mismatch — possible CSRF".to_string(),
+            ));
+        }
+    }
 
     // Send success response to browser
     let html = r#"<html><body><h2>✅ Login successful!</h2><p>You can close this tab and return to the terminal.</p><script>window.close()</script></body></html>"#;

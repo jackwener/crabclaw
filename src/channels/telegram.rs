@@ -7,9 +7,6 @@ use tracing::{debug, info, warn};
 
 use crate::channels::base::{Channel, ChannelResponse};
 use crate::core::config::AppConfig;
-use crate::core::context::build_messages;
-use crate::core::router::route_user;
-use crate::tape::store::TapeStore;
 
 /// Telegram channel adapter using long polling.
 ///
@@ -181,129 +178,39 @@ async fn handle_message(
     }
 }
 
-/// Maximum number of tool calling iterations to prevent infinite loops.
-const MAX_TOOL_ITERATIONS: usize = 5;
-
 /// Process a message through the CrabClaw router + model pipeline.
 /// Exposed as pub for integration testing — call this directly to test
 /// end-to-end message handling without needing a real Telegram connection.
 ///
-/// Supports tool calling: if the model returns tool_calls, this function
-/// executes the tools and re-invokes the model with tool results, up to
-/// MAX_TOOL_ITERATIONS times.
+/// Delegates to `AgentLoop::handle_input` which handles:
+/// - Command routing
+/// - Tool calling loop (up to 5 iterations)
+/// - Tape recording
+/// - System prompt building
 pub async fn process_message(
     text: &str,
     config: &AppConfig,
     workspace: &std::path::Path,
     session_id: &str,
 ) -> ChannelResponse {
-    // Open or create tape for this session
-    let tape_dir = workspace.join(".crabclaw");
-    let tape_name = session_id.replace(':', "_");
-    let tape = TapeStore::open(&tape_dir, &tape_name);
-
-    let mut tape = match tape {
-        Ok(t) => t,
+    let mut agent = match crate::core::agent_loop::AgentLoop::open(config, workspace, session_id) {
+        Ok(a) => a,
         Err(e) => {
-            warn!("telegram.tape.error: {e}");
+            warn!("telegram.agent_loop.error: {e}");
             return ChannelResponse {
-                error: Some(format!("tape error: {e}")),
+                error: Some(format!("{e}")),
                 ..Default::default()
             };
         }
     };
 
-    tape.ensure_bootstrap_anchor().ok();
+    let result = agent.handle_input(text).await;
 
-    // Route the user input
-    let route_result = route_user(text, &mut tape, workspace);
-
-    // Record user message
-    tape.append_message("user", text).ok();
-
-    let mut response = ChannelResponse {
-        immediate_output: if route_result.immediate_output.is_empty() {
-            None
-        } else {
-            Some(route_result.immediate_output.clone())
-        },
-        ..Default::default()
-    };
-
-    // If we need the model, send the request (with tool calling loop)
-    if route_result.enter_model {
-        // Build tool definitions from the registry (builtins + skills)
-        let mut registry = crate::tools::registry::builtin_registry();
-        crate::tools::registry::register_skills(&mut registry, workspace);
-        let tool_defs = crate::tools::registry::to_tool_definitions(&registry);
-        let tools = if tool_defs.is_empty() {
-            None
-        } else {
-            Some(tool_defs)
-        };
-
-        let system_prompt =
-            crate::core::context::build_system_prompt(config.system_prompt.as_deref(), workspace);
-        let mut messages = build_messages(&tape, Some(&system_prompt), config.max_context_messages);
-
-        for iteration in 0..MAX_TOOL_ITERATIONS {
-            let request = crate::llm::api_types::ChatRequest {
-                model: config.model.clone(),
-                messages: messages.clone(),
-                max_tokens: None,
-                tools: tools.clone(),
-            };
-
-            match crate::llm::client::send_chat_request(config, &request).await {
-                Ok(chat_response) => {
-                    // Check if model wants to call tools
-                    if let Some(tool_calls) = chat_response.tool_calls() {
-                        debug!(
-                            iteration = iteration,
-                            tool_count = tool_calls.len(),
-                            "telegram.tool_calls"
-                        );
-
-                        // Append the assistant message with tool_calls to context
-                        messages.push(crate::llm::api_types::Message::assistant_with_tool_calls(
-                            tool_calls.to_vec(),
-                        ));
-
-                        // Execute each tool and append results
-                        for tc in tool_calls {
-                            let result = crate::tools::registry::execute_tool(
-                                &tc.function.name,
-                                &tc.function.arguments,
-                                &tape,
-                                workspace,
-                            );
-                            debug!(
-                                tool = %tc.function.name,
-                                result = %result,
-                                "telegram.tool_result"
-                            );
-                            messages.push(crate::llm::api_types::Message::tool(&tc.id, &result));
-                        }
-                        // Continue loop — re-call model with tool results
-                        continue;
-                    }
-
-                    // No tool calls — we have the final response
-                    if let Some(content) = chat_response.assistant_content() {
-                        tape.append_message("assistant", content).ok();
-                        response.assistant_output = Some(content.to_string());
-                    }
-                    break;
-                }
-                Err(e) => {
-                    response.error = Some(format!("{e}"));
-                    break;
-                }
-            }
-        }
+    ChannelResponse {
+        immediate_output: result.immediate_output,
+        assistant_output: result.assistant_output,
+        error: result.error,
     }
-
-    response
 }
 
 /// Split a long message into chunks that fit Telegram's per-message limit.

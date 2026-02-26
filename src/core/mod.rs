@@ -1,7 +1,9 @@
+pub mod agent_loop;
 pub mod command;
 pub mod config;
 pub mod context;
 pub mod error;
 pub mod input;
+pub mod model_runner;
 pub mod router;
 pub mod shell;

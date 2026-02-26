@@ -5,10 +5,8 @@ use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 
 use crate::core::config::{CliConfigOverrides, load_runtime_config};
-use crate::core::context::build_messages;
 use crate::core::error::{CrabClawError, Result};
 use crate::core::input::resolve_prompt;
-use crate::llm::api_types::ChatRequest;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -130,89 +128,37 @@ fn run_command(args: RunArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Initialize tape store for session recording.
-    let tape_dir = workspace.join(".crabclaw");
-    let mut tape =
-        crate::tape::store::TapeStore::open(&tape_dir, "default").map_err(CrabClawError::Io)?;
-    tape.ensure_bootstrap_anchor().map_err(CrabClawError::Io)?;
-
-    // Route input through the command router.
-    let route = crate::core::router::route_user(&prompt, &mut tape, &workspace);
-
-    if route.exit_requested {
-        return Ok(());
-    }
-
-    if !route.immediate_output.is_empty() {
-        println!("{}", route.immediate_output);
-    }
-
-    if !route.enter_model {
-        return Ok(());
-    }
-
-    // Record user message to tape.
-    tape.append_message("user", &route.model_prompt)
-        .map_err(CrabClawError::Io)?;
-
-    // Build multi-turn messages from tape context.
-    let system_prompt =
-        crate::core::context::build_system_prompt(config.system_prompt.as_deref(), &workspace);
-    let messages = build_messages(&tape, Some(&system_prompt), config.max_context_messages);
-
-    let request = ChatRequest {
-        model: config.model.clone(),
-        messages,
-        max_tokens: None,
-        tools: None,
-    };
+    let mut agent = crate::core::agent_loop::AgentLoop::open(&config, &workspace, "default")?;
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| CrabClawError::Network(format!("failed to start runtime: {e}")))?;
 
-    let mut rx = rt.block_on(crate::llm::client::send_chat_request_stream(
-        &config, &request,
-    ))?;
-    let mut full_content = String::new();
     let mut has_started_text = false;
-
-    rt.block_on(async {
-        while let Some(chunk_res) = rx.recv().await {
-            match chunk_res {
-                Ok(chunk) => match chunk {
-                    crate::llm::api_types::StreamChunk::Content(text) => {
-                        if !has_started_text {
-                            println!();
-                            has_started_text = true;
-                        }
-                        print!("{text}");
-                        std::io::Write::flush(&mut std::io::stdout()).unwrap();
-                        full_content.push_str(&text);
-                    }
-                    crate::llm::api_types::StreamChunk::Done => {
-                        if has_started_text {
-                            println!();
-                        }
-                        break;
-                    }
-                    _ => {} // Ignore tool calls in single-run mode for now
-                },
-                Err(e) => {
-                    eprintln!("\nerror: {e}");
-                    break;
-                }
-            }
+    let result = rt.block_on(agent.handle_input_stream(&prompt, |token| {
+        if !has_started_text {
+            println!();
+            has_started_text = true;
         }
-    });
+        print!("{token}");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    }));
 
-    if !full_content.is_empty() {
-        // Record assistant response to tape.
-        tape.append_message("assistant", &full_content)
-            .map_err(CrabClawError::Io)?;
-    } else {
-        eprintln!("warning: no response content from model");
+    if has_started_text {
+        println!();
+    }
+
+    if result.exit_requested {
+        return Ok(());
+    }
+
+    if let Some(output) = &result.immediate_output {
+        println!("{output}");
+    }
+
+    if let Some(err) = &result.error {
+        eprintln!("error: {err}");
     }
 
     Ok(())

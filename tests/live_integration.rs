@@ -464,3 +464,66 @@ async fn live_agent_loop_tool_call() {
         result.tool_rounds
     );
 }
+
+/// AgentLoop::handle_input triggers file.edit tool calling with real model.
+#[tokio::test]
+#[serial]
+async fn live_agent_loop_file_edit() {
+    let config = require_live_config!();
+    let workspace = TempDir::new().unwrap();
+
+    // Pre-create a file with known content
+    std::fs::write(
+        workspace.path().join("edit_target.txt"),
+        "The color is RED and the shape is CIRCLE.",
+    )
+    .unwrap();
+
+    let mut agent =
+        crabclaw::core::agent_loop::AgentLoop::open(&config, workspace.path(), "live_al_edit")
+            .unwrap();
+
+    let result = agent
+        .handle_input(
+            "Use the file.edit tool to change 'RED' to 'BLUE' in 'edit_target.txt'. \
+             You MUST use the file.edit tool, not file.write.",
+        )
+        .await;
+
+    println!(
+        "[live_agent_loop_edit] reply: {:?}, tool_rounds: {}",
+        result
+            .assistant_output
+            .as_deref()
+            .map(|s| &s[..s.len().min(300)]),
+        result.tool_rounds
+    );
+    if let Some(err) = &result.error {
+        println!("[live_agent_loop_edit] error: {}", err);
+    }
+
+    let file_path = workspace.path().join("edit_target.txt");
+    let content = std::fs::read_to_string(&file_path).unwrap();
+    println!("[live_agent_loop_edit] file content: {}", content);
+
+    assert!(
+        content.contains("BLUE"),
+        "Expected 'BLUE' in edited file, got: {}",
+        content
+    );
+    assert!(
+        content.contains("CIRCLE"),
+        "Expected 'CIRCLE' (unchanged) in file, got: {}",
+        content
+    );
+    assert!(
+        !content.contains("RED"),
+        "Expected 'RED' to be replaced, but it's still there: {}",
+        content
+    );
+    assert!(
+        result.tool_rounds > 0,
+        "Expected at least 1 tool round, got: {}",
+        result.tool_rounds
+    );
+}

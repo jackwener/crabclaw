@@ -235,11 +235,49 @@ impl<'a> AgentLoop<'a> {
                 debug!(tools = ?newly_expanded, "agent_loop.hints_activated");
             }
 
-            // Record to tape
-            if let Err(e) = self.tape.append_message("assistant", &turn.assistant_text) {
-                warn!("agent_loop.tape.write.error: {e}");
+            // Route assistant output through command detection
+            let assistant_route = crate::core::router::route_assistant(
+                &turn.assistant_text,
+                &mut self.tape,
+                self.workspace,
+            );
+
+            if assistant_route.has_commands() {
+                debug!(
+                    commands = assistant_route.command_blocks.len(),
+                    "agent_loop.assistant_commands_executed"
+                );
+
+                // Record the full assistant text first
+                if let Err(e) = self.tape.append_message("assistant", &turn.assistant_text) {
+                    warn!("agent_loop.tape.write.error: {e}");
+                }
+
+                // Record command results as a separate event
+                if let Err(e) = self.tape.append_event(
+                    "assistant_command_results",
+                    serde_json::json!({
+                        "blocks": assistant_route.command_blocks,
+                    }),
+                ) {
+                    warn!("agent_loop.tape.write.error: {e}");
+                }
+
+                // Set visible text as output (commands stripped)
+                if !assistant_route.visible_text.is_empty() {
+                    result.assistant_output = Some(assistant_route.visible_text);
+                }
+
+                if assistant_route.exit_requested {
+                    result.exit_requested = true;
+                }
+            } else {
+                // No commands — record and return as-is
+                if let Err(e) = self.tape.append_message("assistant", &turn.assistant_text) {
+                    warn!("agent_loop.tape.write.error: {e}");
+                }
+                result.assistant_output = Some(turn.assistant_text.clone());
             }
-            result.assistant_output = Some(turn.assistant_text.clone());
         }
     }
 

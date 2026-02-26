@@ -115,6 +115,11 @@ pub fn builtin_registry() -> ToolRegistry {
         "Search for text within files in the workspace (recursive grep). Case-insensitive.",
         "builtin",
     );
+    registry.register(
+        "file.edit",
+        "Edit a file by searching for old text and replacing with new text. Supports replace_all.",
+        "builtin",
+    );
     registry
 }
 
@@ -211,6 +216,28 @@ pub fn tool_parameters(name: &str) -> serde_json::Value {
                 }
             },
             "required": ["query"]
+        }),
+        "file.edit" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file relative to the workspace root"
+                },
+                "old": {
+                    "type": "string",
+                    "description": "The exact text to search for in the file"
+                },
+                "new": {
+                    "type": "string",
+                    "description": "The replacement text"
+                },
+                "replace_all": {
+                    "type": "boolean",
+                    "description": "If true, replace all occurrences. Default: false (replace first only)."
+                }
+            },
+            "required": ["path", "old", "new"]
         }),
         _ => serde_json::json!({
             "type": "object",
@@ -330,6 +357,23 @@ pub fn execute_tool(
             }
             let path = parse_json_arg(args, "path").unwrap_or_default();
             file_ops::search_files(workspace, &query, &path)
+        }
+        "file.edit" => {
+            use crate::tools::file_ops;
+            let path = parse_json_arg(args, "path").unwrap_or_default();
+            let old = parse_json_arg(args, "old").unwrap_or_default();
+            let new = parse_json_arg(args, "new").unwrap_or_default();
+            if path.is_empty() {
+                return "Error: 'path' argument is required.".to_string();
+            }
+            if old.is_empty() {
+                return "Error: 'old' argument is required.".to_string();
+            }
+            let replace_all = match serde_json::from_str::<serde_json::Value>(args) {
+                Ok(v) => v["replace_all"].as_bool().unwrap_or(false),
+                Err(_) => false,
+            };
+            file_ops::edit_file(workspace, &path, &old, &new, replace_all)
         }
         _ if name.starts_with("skill.") => {
             // Skill tool: load the skill body and return as context.

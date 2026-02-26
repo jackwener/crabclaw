@@ -20,6 +20,32 @@ pub struct UserRouteResult {
     pub exit_requested: bool,
 }
 
+/// Routing outcome for assistant (model) output.
+///
+/// When the model outputs comma-prefixed commands, they are automatically executed.
+/// Results are captured as structured `<command>` blocks to feed back to the model.
+#[derive(Debug, Clone, Default)]
+pub struct AssistantRouteResult {
+    /// Text from the assistant that is NOT a command — shown to user.
+    pub visible_text: String,
+    /// Command execution results as structured XML blocks.
+    /// If non-empty, these should be fed back to the model as context.
+    pub command_blocks: Vec<String>,
+    /// Whether a quit/exit was requested.
+    pub exit_requested: bool,
+}
+
+impl AssistantRouteResult {
+    /// Whether any commands were detected and executed.
+    pub fn has_commands(&self) -> bool {
+        !self.command_blocks.is_empty()
+    }
+
+    /// Combined command blocks for feeding back to the model.
+    pub fn next_prompt(&self) -> String {
+        self.command_blocks.join("\n")
+    }
+}
 /// Route user input to the appropriate handler.
 ///
 /// Logic (aligned with bub's `InputRouter.route_user`):
@@ -142,6 +168,128 @@ pub fn route_user(input: &str, tape: &mut TapeStore, workspace: &Path) -> UserRo
                 }
             }
         }
+    }
+}
+
+/// Route assistant (model) output through command detection.
+///
+/// Scans each line of the assistant's output for comma-prefixed commands.
+/// Commands are executed immediately:
+/// - Successful commands: result captured as `<command>` block
+/// - Failed commands: result captured similarly for self-correction
+///
+/// Lines that are NOT commands are kept as `visible_text`.
+/// If any commands were found, their results become `command_blocks`
+/// which should be fed back to the model in the next turn.
+pub fn route_assistant(text: &str, tape: &mut TapeStore, workspace: &Path) -> AssistantRouteResult {
+    let mut visible_lines = Vec::new();
+    let mut command_blocks = Vec::new();
+    let mut exit_requested = false;
+    let mut in_fence = false;
+
+    for line in text.lines() {
+        let stripped = line.trim();
+
+        // Track code fence boundaries
+        if stripped.starts_with("```") {
+            in_fence = !in_fence;
+            if !command_blocks.is_empty() {
+                // Don't add fence markers to visible output when executing commands
+                continue;
+            }
+            visible_lines.push(line.to_string());
+            continue;
+        }
+
+        // Detect comma-prefixed commands
+        let command = detect_command(stripped);
+
+        if command.is_none() {
+            visible_lines.push(line.to_string());
+            continue;
+        }
+
+        let command = command.unwrap();
+
+        match command.kind {
+            CommandKind::Shell => {
+                use crate::core::shell;
+
+                let shell_result = shell::execute_shell(&command.raw, workspace);
+
+                tape.append_event(
+                    "command",
+                    serde_json::json!({
+                        "origin": "assistant",
+                        "kind": "shell",
+                        "cmd": command.raw,
+                        "exit_code": shell_result.exit_code,
+                        "timed_out": shell_result.timed_out,
+                        "stdout": shell_result.stdout,
+                        "stderr": shell_result.stderr,
+                    }),
+                )
+                .ok();
+
+                let block = if shell_result.exit_code == 0 && !shell_result.timed_out {
+                    let output = shell::format_shell_output(&shell_result);
+                    format!(
+                        "<command name=\"{}\" status=\"ok\">\n{}\n</command>",
+                        command.raw, output
+                    )
+                } else {
+                    shell::wrap_failure_context(&command.raw, &shell_result)
+                };
+                command_blocks.push(block);
+            }
+            CommandKind::Internal => {
+                // Skip quit from assistant — model shouldn't be able to quit
+                if command.name == "quit" {
+                    visible_lines.push(line.to_string());
+                    continue;
+                }
+
+                let registry = builtin_registry();
+                let result =
+                    execute_internal(&command.name, tape, &command.args, workspace, &registry);
+
+                tape.append_event(
+                    "command",
+                    serde_json::json!({
+                        "origin": "assistant",
+                        "kind": "internal",
+                        "name": command.name,
+                        "status": if result.success { "ok" } else { "error" },
+                        "output": result.output,
+                    }),
+                )
+                .ok();
+
+                let status = if result.success { "ok" } else { "error" };
+                let block = format!(
+                    "<command name=\"{}\" status=\"{}\">\n{}\n</command>",
+                    command.name, status, result.output
+                );
+                command_blocks.push(block);
+
+                if result.exit_requested {
+                    exit_requested = true;
+                }
+            }
+        }
+    }
+
+    // Build visible text from non-command lines
+    let visible_text = if command_blocks.is_empty() {
+        text.to_string() // No commands found, return original text
+    } else {
+        visible_lines.join("\n").trim().to_string()
+    };
+
+    AssistantRouteResult {
+        visible_text,
+        command_blocks,
+        exit_requested,
     }
 }
 
@@ -702,5 +850,96 @@ mod tests {
         let result = route_user(",tool.describe nonexistent", &mut tape, ws.path());
         // Unknown tool fails and falls to model
         assert!(result.enter_model);
+    }
+
+    // ── route_assistant tests ──────────────────────────────────────
+
+    #[test]
+    fn assistant_no_commands_passthrough() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_assistant(
+            "Here is a normal response from the model.",
+            &mut tape,
+            ws.path(),
+        );
+        assert!(!result.has_commands());
+        assert_eq!(
+            result.visible_text,
+            "Here is a normal response from the model."
+        );
+        assert!(!result.exit_requested);
+    }
+
+    #[test]
+    fn assistant_shell_command_detected() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_assistant("Let me check:\n,echo hello world", &mut tape, ws.path());
+        assert!(result.has_commands());
+        assert_eq!(result.command_blocks.len(), 1);
+        assert!(result.command_blocks[0].contains("hello world"));
+        assert!(result.command_blocks[0].contains("<command"));
+        // Visible text should have the preamble but not the command
+        assert!(result.visible_text.contains("Let me check:"));
+    }
+
+    #[test]
+    fn assistant_internal_command_detected() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_assistant("Checking tools:\n,help", &mut tape, ws.path());
+        assert!(result.has_commands());
+        assert_eq!(result.command_blocks.len(), 1);
+        assert!(result.command_blocks[0].contains("help"));
+    }
+
+    #[test]
+    fn assistant_quit_blocked() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_assistant(",quit", &mut tape, ws.path());
+        // Quit from assistant should be blocked
+        assert!(!result.has_commands());
+        assert!(!result.exit_requested);
+    }
+
+    #[test]
+    fn assistant_mixed_text_and_commands() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_assistant(
+            "Starting work.\n,echo step1\nDone with step 1.\n,echo step2\nAll done.",
+            &mut tape,
+            ws.path(),
+        );
+        assert!(result.has_commands());
+        assert_eq!(result.command_blocks.len(), 2);
+        assert!(result.visible_text.contains("Starting work."));
+        assert!(result.visible_text.contains("All done."));
+    }
+
+    #[test]
+    fn assistant_command_in_fence() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_assistant(
+            "Run this:\n```\n,echo inside_fence\n```",
+            &mut tape,
+            ws.path(),
+        );
+        assert!(result.has_commands());
+        assert_eq!(result.command_blocks.len(), 1);
+        assert!(result.command_blocks[0].contains("inside_fence"));
+    }
+
+    #[test]
+    fn assistant_next_prompt() {
+        let (_dir, mut tape) = make_tape();
+        let ws = workspace();
+        let result = route_assistant(",echo hello\n,echo world", &mut tape, ws.path());
+        let prompt = result.next_prompt();
+        assert!(prompt.contains("hello"));
+        assert!(prompt.contains("world"));
     }
 }

@@ -507,3 +507,139 @@ async fn agent_loop_rate_limit_error() {
         "expected rate limit error, got: {err}"
     );
 }
+// ============================================================================
+// Test 13: file.edit tool calling via AgentLoop
+// ============================================================================
+
+#[tokio::test]
+async fn agent_loop_file_edit_tool_call() {
+    let mut server = mockito::Server::new_async().await;
+
+    // Create a test file in workspace
+    let workspace = TempDir::new().unwrap();
+    std::fs::write(workspace.path().join("test.txt"), "hello world").unwrap();
+
+    // Model requests file.edit tool call
+    let args = r#"{"path": "test.txt", "old": "hello", "new": "goodbye"}"#;
+    server
+        .mock("POST", "/chat/completions")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(tool_call_response("file.edit", "edit_1", args))
+        .create_async()
+        .await;
+
+    // After tool result, model returns confirmation
+    server
+        .mock("POST", "/chat/completions")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(text_response("File updated successfully."))
+        .create_async()
+        .await;
+
+    let config = test_config(&server.url());
+    let mut agent = AgentLoop::open(&config, workspace.path(), "test_edit").unwrap();
+    let result = agent
+        .handle_input("replace hello with goodbye in test.txt")
+        .await;
+
+    assert!(
+        result.error.is_none(),
+        "unexpected error: {:?}",
+        result.error
+    );
+    assert_eq!(
+        result.assistant_output.as_deref(),
+        Some("File updated successfully.")
+    );
+    assert_eq!(result.tool_rounds, 1);
+
+    // Verify the file was actually modified
+    let content = std::fs::read_to_string(workspace.path().join("test.txt")).unwrap();
+    assert_eq!(content, "goodbye world");
+}
+
+// ============================================================================
+// Test 14: route_assistant detects shell command in model output
+// ============================================================================
+
+#[tokio::test]
+async fn agent_loop_route_assistant_shell_command() {
+    let mut server = mockito::Server::new_async().await;
+
+    // Model returns text that includes a comma-prefixed shell command
+    server
+        .mock("POST", "/chat/completions")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(text_response(
+            "Let me check:\\n,echo auto-executed-from-assistant",
+        ))
+        .create_async()
+        .await;
+
+    let config = test_config(&server.url());
+    let workspace = TempDir::new().unwrap();
+
+    let mut agent = AgentLoop::open(&config, workspace.path(), "test_assistant_route").unwrap();
+    let result = agent.handle_input("run something").await;
+
+    assert!(
+        result.error.is_none(),
+        "unexpected error: {:?}",
+        result.error
+    );
+
+    // The visible text should contain the non-command part
+    if let Some(output) = &result.assistant_output {
+        assert!(output.contains("Let me check:"));
+    }
+
+    // Tape should have a command event from assistant
+    let entries = agent.tape().entries();
+    let assistant_cmds: Vec<_> = entries
+        .iter()
+        .filter(|e| {
+            e.kind == "command"
+                && e.payload.get("origin").and_then(|v| v.as_str()) == Some("assistant")
+        })
+        .collect();
+    assert!(
+        !assistant_cmds.is_empty(),
+        "expected assistant command in tape"
+    );
+}
+
+// ============================================================================
+// Test 15: route_assistant passes through normal text unchanged
+// ============================================================================
+
+#[tokio::test]
+async fn agent_loop_route_assistant_no_commands_passthrough() {
+    let mut server = mockito::Server::new_async().await;
+
+    server
+        .mock("POST", "/chat/completions")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(text_response("Just a normal response with no commands."))
+        .create_async()
+        .await;
+
+    let config = test_config(&server.url());
+    let workspace = TempDir::new().unwrap();
+
+    let mut agent = AgentLoop::open(&config, workspace.path(), "test_no_cmd").unwrap();
+    let result = agent.handle_input("tell me something").await;
+
+    assert!(
+        result.error.is_none(),
+        "unexpected error: {:?}",
+        result.error
+    );
+    assert_eq!(
+        result.assistant_output.as_deref(),
+        Some("Just a normal response with no commands.")
+    );
+}

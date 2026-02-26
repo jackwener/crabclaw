@@ -117,6 +117,58 @@ pub fn write_file(workspace: &Path, file_path: &str, content: &str) -> String {
     }
 }
 
+/// Edit a file by searching for `old` text and replacing with `new` text.
+///
+/// If `replace_all` is true, all occurrences are replaced; otherwise only the first.
+/// Returns an error message if the file doesn't exist or `old` text is not found.
+pub fn edit_file(
+    workspace: &Path,
+    file_path: &str,
+    old: &str,
+    new: &str,
+    replace_all: bool,
+) -> String {
+    match resolve_safe_path(workspace, file_path) {
+        Some(path) => {
+            if !path.exists() {
+                return format!("File not found: {file_path}");
+            }
+            if !path.is_file() {
+                return format!("Not a file: {file_path}");
+            }
+            let text = match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(e) => return format!("Error reading file: {e}"),
+            };
+
+            if old.is_empty() {
+                return "Error: 'old' text cannot be empty.".to_string();
+            }
+
+            let count = text.matches(old).count();
+            if count == 0 {
+                return format!("Error: old text not found in {file_path}");
+            }
+
+            let updated = if replace_all {
+                text.replace(old, new)
+            } else {
+                text.replacen(old, new, 1)
+            };
+
+            match std::fs::write(&path, &updated) {
+                Ok(()) => {
+                    let replaced = if replace_all { count } else { 1 };
+                    let display = path.strip_prefix(workspace).unwrap_or(&path).display();
+                    format!("Updated {display}: {replaced} occurrence(s) replaced")
+                }
+                Err(e) => format!("Error writing file: {e}"),
+            }
+        }
+        None => format!("Access denied: path escapes workspace: {file_path}"),
+    }
+}
+
 /// List directory contents in the workspace.
 pub fn list_directory(workspace: &Path, dir_path: &str) -> String {
     let target = if dir_path.trim().is_empty() {
@@ -496,5 +548,77 @@ mod tests {
 
         let result = search_files(dir.path(), "hello", "");
         assert!(result.contains("1 match"));
+    }
+
+    // ── edit_file tests ──────────────────────────────────────────────
+
+    #[test]
+    fn edit_replaces_first_occurrence() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "aaa bbb aaa").unwrap();
+        let result = edit_file(dir.path(), "a.txt", "aaa", "ccc", false);
+        assert!(result.contains("1 occurrence"));
+        let content = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
+        assert_eq!(content, "ccc bbb aaa");
+    }
+
+    #[test]
+    fn edit_replaces_all_occurrences() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "aaa bbb aaa").unwrap();
+        let result = edit_file(dir.path(), "a.txt", "aaa", "ccc", true);
+        assert!(result.contains("2 occurrence"));
+        let content = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
+        assert_eq!(content, "ccc bbb ccc");
+    }
+
+    #[test]
+    fn edit_old_text_not_found() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello world").unwrap();
+        let result = edit_file(dir.path(), "a.txt", "xyz", "abc", false);
+        assert!(result.contains("old text not found"));
+    }
+
+    #[test]
+    fn edit_file_not_found() {
+        let dir = tempdir().unwrap();
+        let result = edit_file(dir.path(), "nonexistent.txt", "a", "b", false);
+        assert!(result.contains("File not found"));
+    }
+
+    #[test]
+    fn edit_empty_old_rejected() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello").unwrap();
+        let result = edit_file(dir.path(), "a.txt", "", "x", false);
+        assert!(result.contains("cannot be empty"));
+    }
+
+    #[test]
+    fn edit_outside_workspace_blocked() {
+        let dir = tempdir().unwrap();
+        let result = edit_file(dir.path(), "../escape.txt", "a", "b", false);
+        assert!(result.contains("Access denied"));
+    }
+
+    #[test]
+    fn edit_delete_text() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello cruel world").unwrap();
+        let result = edit_file(dir.path(), "a.txt", "cruel ", "", false);
+        assert!(result.contains("1 occurrence"));
+        let content = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
+        assert_eq!(content, "hello world");
+    }
+
+    #[test]
+    fn edit_multiline_text() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "line1\nline2\nline3\n").unwrap();
+        let result = edit_file(dir.path(), "a.txt", "line2\nline3", "replaced", false);
+        assert!(result.contains("1 occurrence"));
+        let content = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
+        assert_eq!(content, "line1\nreplaced\n");
     }
 }

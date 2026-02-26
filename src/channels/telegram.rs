@@ -366,6 +366,12 @@ mod tests {
     fn acl_denies_when_user_and_chat_mismatch() {
         let allow_from = vec!["999".to_string()];
         let allow_chats = vec!["300".to_string()];
-        assert!(!acl_allows(&allow_from, &allow_chats, "100", Some("alice"), "200"));
+        assert!(!acl_allows(
+            &allow_from,
+            &allow_chats,
+            "100",
+            Some("alice"),
+            "200"
+        ));
     }
 }

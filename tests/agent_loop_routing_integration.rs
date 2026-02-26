@@ -1,8 +1,8 @@
 mod support;
 
+use crabclaw::core::agent_loop::AgentLoop;
 use support::builders::openai_config;
 use support::responses::text_response;
-use crabclaw::core::agent_loop::AgentLoop;
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -24,7 +24,10 @@ async fn routes_to_model_and_returns_reply() {
 
     mock.assert_async().await;
     assert!(result.error.is_none());
-    assert_eq!(result.assistant_output.as_deref(), Some("Hello from AgentLoop!"));
+    assert_eq!(
+        result.assistant_output.as_deref(),
+        Some("Hello from AgentLoop!")
+    );
 }
 
 #[tokio::test]
@@ -76,7 +79,10 @@ async fn multi_turn_session_keeps_context_on_same_agent() {
 
     assert!(r1.error.is_none());
     assert!(r2.error.is_none());
-    assert_eq!(r2.assistant_output.as_deref(), Some("You asked about my name earlier."));
+    assert_eq!(
+        r2.assistant_output.as_deref(),
+        Some("You asked about my name earlier.")
+    );
 }
 
 #[tokio::test]

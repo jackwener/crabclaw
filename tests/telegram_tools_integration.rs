@@ -1,9 +1,9 @@
 mod support;
 
+use crabclaw::channels::telegram::process_message;
 use support::assertions::assert_ok_reply;
 use support::builders::openai_config;
 use support::responses::{text_response, tool_call_response};
-use crabclaw::channels::telegram::process_message;
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -27,7 +27,13 @@ async fn openai_tool_calling_loop_returns_final_reply() {
 
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response = process_message("what tools do you have?", &config, workspace.path(), "test:tools").await;
+    let response = process_message(
+        "what tools do you have?",
+        &config,
+        workspace.path(),
+        "test:tools",
+    )
+    .await;
 
     final_mock.assert_async().await;
     assert_ok_reply(&response, "I found 5 tools available.");
@@ -68,7 +74,13 @@ async fn file_write_then_read_tool_sequence() {
 
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response = process_message("write and read a file", &config, workspace.path(), "test:file_ops").await;
+    let response = process_message(
+        "write and read a file",
+        &config,
+        workspace.path(),
+        "test:file_ops",
+    )
+    .await;
 
     assert!(response.error.is_none());
     assert_eq!(
@@ -99,7 +111,13 @@ async fn unknown_tool_name_recovery() {
 
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response = process_message("use a fake tool", &config, workspace.path(), "test:unknown_tool").await;
+    let response = process_message(
+        "use a fake tool",
+        &config,
+        workspace.path(),
+        "test:unknown_tool",
+    )
+    .await;
 
     assert!(response.error.is_none());
     assert_eq!(
@@ -126,7 +144,8 @@ async fn tool_loop_breaks_after_max_iterations() {
 
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response = process_message("loop forever", &config, workspace.path(), "test:max_iter").await;
+    let response =
+        process_message("loop forever", &config, workspace.path(), "test:max_iter").await;
 
     assert!(response.error.is_none());
     assert!(response.assistant_output.is_none());
@@ -139,7 +158,11 @@ async fn malformed_file_write_args_model_recovers() {
         .mock("POST", "/chat/completions")
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(tool_call_response("file.write", "call_bad_args", r#"{"content":"x"}"#))
+        .with_body(tool_call_response(
+            "file.write",
+            "call_bad_args",
+            r#"{"content":"x"}"#,
+        ))
         .create_async()
         .await;
     server
@@ -152,7 +175,8 @@ async fn malformed_file_write_args_model_recovers() {
 
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response = process_message("create a file", &config, workspace.path(), "test:bad_args").await;
+    let response =
+        process_message("create a file", &config, workspace.path(), "test:bad_args").await;
 
     assert!(response.error.is_none());
     assert_eq!(

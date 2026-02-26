@@ -1,9 +1,9 @@
 mod support;
 
+use crabclaw::core::agent_loop::AgentLoop;
 use support::builders::openai_config;
 use support::responses::{text_response, tool_call_response};
 use support::sse::{sse_content_chunk, sse_stream, sse_tool_call_args, sse_tool_call_start};
-use crabclaw::core::agent_loop::AgentLoop;
 use tempfile::TempDir;
 
 #[tokio::test]

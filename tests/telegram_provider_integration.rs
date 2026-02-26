@@ -1,9 +1,9 @@
 mod support;
 
+use crabclaw::channels::telegram::process_message;
 use support::assertions::{assert_has_error, assert_ok_reply};
 use support::builders::{anthropic_config, openai_config};
 use support::responses::text_response;
-use crabclaw::channels::telegram::process_message;
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -64,7 +64,8 @@ async fn anthropic_tool_call_then_final_reply() {
 
     let config = anthropic_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response = process_message("what tools?", &config, workspace.path(), "test:anth_tool").await;
+    let response =
+        process_message("what tools?", &config, workspace.path(), "test:anth_tool").await;
 
     final_mock.assert_async().await;
     assert!(response.error.is_none());

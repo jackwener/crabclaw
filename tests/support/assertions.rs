@@ -29,7 +29,11 @@ pub fn assert_non_empty_channel_output(response: &ChannelResponse) {
 }
 
 pub fn assert_no_error_loop(result: &LoopResult) {
-    assert!(result.error.is_none(), "unexpected error: {:?}", result.error);
+    assert!(
+        result.error.is_none(),
+        "unexpected error: {:?}",
+        result.error
+    );
 }
 
 pub fn assert_non_empty_loop_output(result: &LoopResult) {

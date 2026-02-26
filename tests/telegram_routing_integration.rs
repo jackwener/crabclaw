@@ -1,9 +1,9 @@
 mod support;
 
+use crabclaw::channels::telegram::process_message;
 use support::assertions::assert_has_error;
 use support::builders::openai_config;
 use support::responses::text_response;
-use crabclaw::channels::telegram::process_message;
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -92,8 +92,13 @@ async fn http_429_is_reported_as_rate_limit_error() {
 
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response =
-        process_message("test rate limit", &config, workspace.path(), "test:session5").await;
+    let response = process_message(
+        "test rate limit",
+        &config,
+        workspace.path(),
+        "test:session5",
+    )
+    .await;
 
     mock.assert_async().await;
     assert_has_error(&response);

@@ -8,7 +8,7 @@ CrabClaw is an OpenClaw-compatible agentic coding toolchain written in Rust.
 ## Features
 
 - **Multi-channel**: CLI, interactive REPL, and Telegram bot with whitelist access control
-- **Model agnostic**: OpenRouter (OpenAI format) and native Anthropic adapters
+- **Model agnostic**: OpenAI-compatible (Chat Completions), native Anthropic (Messages API), and Codex (Responses API via OAuth)
 - **AgentLoop**: Unified abstraction: route → model → tool → tape in a single `handle_input` call
 - **Skill engine**: Auto-discovers `.agent/skills/` and bridges them as LLM-callable tools
 - **Shell execution**: Run shell commands via `,git status` or `shell.exec` tool, with failure self-correction
@@ -43,6 +43,72 @@ CrabClaw is an OpenClaw-compatible agentic coding toolchain written in Rust.
    cargo run -- serve                # Telegram bot (requires TELEGRAM_BOT_TOKEN)
    cargo run -- auth status          # Check auth status
    ```
+
+## LLM Configuration
+
+CrabClaw supports three provider modes, selected by the `MODEL` prefix:
+
+### Provider Modes
+
+| Prefix | Provider | API Format | Auth | Example Model |
+|--------|----------|-----------|------|---------------|
+| *(none)* | OpenAI-compatible | Chat Completions | `API_KEY` | `gpt-4o` |
+| `anthropic:` | Anthropic | Messages API | `API_KEY` | `anthropic:claude-sonnet-4-20250514` |
+| `codex:` | OpenAI Codex | Responses API | OAuth | `codex:gpt-5.3-codex` |
+
+### Option A: API Key (OpenAI-compatible / Anthropic)
+
+Works with OpenAI, OpenRouter, GLM, DeepSeek, or any OpenAI-compatible endpoint.
+
+```bash
+# .env.local
+API_KEY=sk-xxx
+BASE_URL=https://api.openai.com/v1      # or https://openrouter.ai/api/v1
+MODEL=gpt-4o                             # or anthropic:claude-sonnet-4-20250514
+```
+
+### Option B: OAuth + Codex (ChatGPT Plus/Pro subscription)
+
+Uses your ChatGPT subscription quota — **no API credits needed**.
+
+```bash
+# Step 1: Login via browser
+cargo run -- auth login
+
+# Step 2: Configure model
+# .env.local
+MODEL=codex:gpt-5.3-codex
+# No API_KEY or BASE_URL needed — Codex uses chatgpt.com backend
+```
+
+Available Codex models: `gpt-5.3-codex`, `gpt-5-codex`, `gpt-5.1-codex-mini`
+
+### Auth Management
+
+```bash
+cargo run -- auth login    # Open browser for ChatGPT OAuth login
+cargo run -- auth status   # Check token expiry and refresh status
+cargo run -- auth logout   # Remove stored tokens
+```
+
+Tokens are stored in `~/.crabclaw/auth.json` with automatic refresh.
+
+### Configuration Precedence
+
+Settings resolve in this order (first wins):
+
+1. CLI flags (`--api-key`, `--api-base`, `--model`)
+2. Profile-specific env vars (`PROFILE_<NAME>_API_KEY`)
+3. Environment variables (`API_KEY`, `BASE_URL`, `MODEL`)
+4. `.env.local` file
+5. OAuth tokens (fallback when no `API_KEY` is set)
+6. Built-in defaults (`MODEL=gpt-4o`)
+
+### Reasoning Effort (Codex models)
+
+```bash
+CODEX_REASONING_EFFORT=high   # low | medium | high (default: high)
+```
 
 ## Usage
 

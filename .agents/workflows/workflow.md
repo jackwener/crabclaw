@@ -1,3 +1,7 @@
+---
+description: 
+---
+
 # Engineering Workflow
 
 This workflow is mandatory for all contributions.
@@ -55,6 +59,7 @@ When behavior, API, or config changes:
 
 Push is allowed only when all are true:
 
+- cargo fmt --all && cargo clippy
 - Tests pass
 - Review checklist passes
 - Documentation impact handled (updated or explicitly N/A)

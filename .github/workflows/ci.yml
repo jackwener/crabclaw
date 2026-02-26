@@ -63,6 +63,9 @@ jobs:
           cargo test --test telegram_provider_integration
           cargo test --test telegram_tools_integration
 
+      - name: Run OpenAI-compatible provider integration tests
+        run: cargo test --test openai_provider_integration
+
       - name: Run live E2E tests
         if: ${{ env.LIVE_API_KEY != '' }}
         env:

@@ -82,11 +82,14 @@ async fn nonstandard_200_error_body_returns_error() {
 #[tokio::test]
 async fn http_429_is_reported_as_rate_limit_error() {
     let mut server = mockito::Server::new_async().await;
+    // The retry logic retries rate-limited requests up to MAX_RETRIES (3) times,
+    // so we expect 4 total requests (1 original + 3 retries).
     let mock = server
         .mock("POST", "/chat/completions")
         .with_status(429)
         .with_header("content-type", "application/json")
         .with_body(r#"{"error":{"message":"rate limited","type":"rate_limit"}}"#)
+        .expect_at_least(1)
         .create_async()
         .await;
 

@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use tracing::{debug, warn};
+use tracing::{debug, instrument, warn};
 
 use crate::core::config::AppConfig;
 use crate::core::context::{build_messages, build_system_prompt};
@@ -104,6 +104,7 @@ impl<'a> AgentLoop<'a> {
     ///
     /// Routes input through the command router, and if the model is needed,
     /// calls the model with the tool-calling loop.
+    #[instrument(skip_all, fields(input_len = text.len()))]
     pub async fn handle_input(&mut self, text: &str) -> LoopResult {
         let mut result = LoopResult::default();
 
@@ -162,6 +163,7 @@ impl<'a> AgentLoop<'a> {
     /// Handle one user input message (**streaming**, for CLI / REPL).
     ///
     /// `on_token` is called for each streamed text chunk from the model.
+    #[instrument(skip_all, fields(input_len = text.len()))]
     pub async fn handle_input_stream<F>(&mut self, text: &str, on_token: F) -> LoopResult
     where
         F: FnMut(&str),

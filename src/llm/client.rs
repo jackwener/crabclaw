@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::core::config::AppConfig;
 use crate::core::error::{CrabClawError, Result};
@@ -33,28 +33,79 @@ struct NonStandardError {
 }
 
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
+const MAX_RETRIES: usize = 3;
+const INITIAL_RETRY_DELAY_MS: u64 = 1000;
 
 /// Send a chat completion request, automatically choosing the provider SDK
 /// based on the model prefix (`provider:model`).
+///
+/// Retries on 429 (rate limit) and network errors with exponential backoff.
+#[instrument(skip_all, fields(model = %request.model))]
 pub async fn send_chat_request(config: &AppConfig, request: &ChatRequest) -> Result<ChatResponse> {
-    if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {
-        send_anthropic_request(config, request, anthropic_model).await
-    } else {
-        // Assume OpenAI compatible by default
-        send_openai_request(config, request).await
+    let mut delay_ms = INITIAL_RETRY_DELAY_MS;
+
+    for attempt in 0..=MAX_RETRIES {
+        let result = if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {
+            send_anthropic_request(config, request, anthropic_model).await
+        } else {
+            send_openai_request(config, request).await
+        };
+
+        match &result {
+            Err(CrabClawError::RateLimit(_)) if attempt < MAX_RETRIES => {
+                warn!(attempt = attempt + 1, delay_ms, "rate limited, retrying");
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                delay_ms *= 2;
+                continue;
+            }
+            Err(CrabClawError::Network(_)) if attempt < MAX_RETRIES => {
+                warn!(attempt = attempt + 1, delay_ms, "network error, retrying");
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                delay_ms *= 2;
+                continue;
+            }
+            _ => return result,
+        }
     }
+
+    unreachable!()
 }
 
 /// Send a chat completion request as a stream.
+///
+/// Retries on 429 (rate limit) and network errors with exponential backoff.
+#[instrument(skip_all, fields(model = %request.model))]
 pub async fn send_chat_request_stream(
     config: &AppConfig,
     request: &ChatRequest,
 ) -> Result<mpsc::UnboundedReceiver<Result<StreamChunk>>> {
-    if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {
-        send_anthropic_request_stream(config, request, anthropic_model).await
-    } else {
-        send_openai_request_stream(config, request).await
+    let mut delay_ms = INITIAL_RETRY_DELAY_MS;
+
+    for attempt in 0..=MAX_RETRIES {
+        let result = if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {
+            send_anthropic_request_stream(config, request, anthropic_model).await
+        } else {
+            send_openai_request_stream(config, request).await
+        };
+
+        match &result {
+            Err(CrabClawError::RateLimit(_)) if attempt < MAX_RETRIES => {
+                warn!(attempt = attempt + 1, delay_ms, "rate limited, retrying");
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                delay_ms *= 2;
+                continue;
+            }
+            Err(CrabClawError::Network(_)) if attempt < MAX_RETRIES => {
+                warn!(attempt = attempt + 1, delay_ms, "network error, retrying");
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                delay_ms *= 2;
+                continue;
+            }
+            _ => return result,
+        }
     }
+
+    unreachable!()
 }
 
 async fn send_anthropic_request(
@@ -651,14 +702,16 @@ mod tests {
         mock.assert_async().await;
     }
 
-    // TP-009: HTTP 429 → Api error (rate limit)
+    // TP-009: HTTP 429 → rate limit error after retries
     #[tokio::test]
     async fn http_429_returns_rate_limit_error() {
         let mut server = mockito::Server::new_async().await;
+        // With retry logic: 1 initial + 3 retries = 4 total requests
         let mock = server
             .mock("POST", "/chat/completions")
             .with_status(429)
             .with_body(r#"{"error": {"message": "Rate limit exceeded"}}"#)
+            .expect(4)
             .create_async()
             .await;
 

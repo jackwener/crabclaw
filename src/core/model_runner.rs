@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use tracing::{debug, info};
+use tracing::{debug, info, instrument};
 
 use crate::core::config::AppConfig;
 use crate::llm::api_types::{
@@ -62,6 +62,7 @@ impl<'a> ModelRunner<'a> {
     ///
     /// This is the async path used by Telegram and test harness.
     /// Returns the final assistant text after all tool rounds.
+    #[instrument(skip_all, fields(model = %self.config.model, msg_count = messages.len()))]
     pub async fn run_turn(
         &self,
         messages: &mut Vec<Message>,
@@ -133,6 +134,7 @@ impl<'a> ModelRunner<'a> {
     ///
     /// Used by CLI and REPL. Calls `on_token` for each streamed text chunk.
     /// After all tool rounds, returns the final result.
+    #[instrument(skip_all, fields(model = %self.config.model, msg_count = messages.len()))]
     pub async fn run_turn_stream<F>(
         &self,
         messages: &mut Vec<Message>,

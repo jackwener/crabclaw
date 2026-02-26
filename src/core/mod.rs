@@ -1,4 +1,5 @@
 pub mod agent_loop;
+pub mod auth;
 pub mod command;
 pub mod config;
 pub mod context;

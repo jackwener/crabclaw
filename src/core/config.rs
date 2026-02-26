@@ -73,14 +73,41 @@ pub fn resolve_config(
     let profiled_api_base = format!("PROFILE_{profile_token}_{API_BASE_KEY}");
     let profiled_model = format!("PROFILE_{profile_token}_{MODEL_KEY}");
 
-    let api_key = first_present([
+    let api_key_from_config = first_present([
         cli_overrides.api_key.as_ref(),
         env_vars.get(&profiled_api_key),
         env_vars.get(API_KEY_KEY),
         dotenv_vars.get(&profiled_api_key),
         dotenv_vars.get(API_KEY_KEY),
-    ])
-    .ok_or_else(|| CrabClawError::Config("missing API_KEY".to_string()))?;
+    ]);
+
+    // Check if AUTH_MODE=oauth is explicitly set
+    let auth_mode = first_present([env_vars.get("AUTH_MODE"), dotenv_vars.get("AUTH_MODE")]);
+    let oauth_mode = auth_mode
+        .as_ref()
+        .is_some_and(|m| m.eq_ignore_ascii_case("oauth"));
+
+    let api_key = if let Some(key) = api_key_from_config {
+        key
+    } else if oauth_mode {
+        // OAuth mode explicitly requested — require tokens
+        crate::core::auth::load_tokens()
+            .map(|t| t.access_token)
+            .ok_or_else(|| {
+                CrabClawError::Config(
+                    "AUTH_MODE=oauth but no tokens found. Run `crabclaw auth login` first."
+                        .to_string(),
+                )
+            })?
+    } else if let Some(tokens) = crate::core::auth::load_tokens() {
+        // No API key configured, but OAuth tokens exist — use them
+        tokens.access_token
+    } else {
+        return Err(CrabClawError::Config(
+            "missing API_KEY. Set API_KEY env var, or run `crabclaw auth login` for OAuth."
+                .to_string(),
+        ));
+    };
 
     let api_base = first_present([
         cli_overrides.api_base.as_ref(),

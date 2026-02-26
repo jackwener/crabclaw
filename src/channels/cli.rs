@@ -26,6 +26,24 @@ enum Commands {
     Interactive(InteractiveArgs),
     /// Start channel server (Telegram, etc.)
     Serve(ServeArgs),
+    /// Manage OAuth authentication
+    Auth(AuthArgs),
+}
+
+#[derive(Debug, Args)]
+struct AuthArgs {
+    #[command(subcommand)]
+    action: AuthAction,
+}
+
+#[derive(Debug, Subcommand)]
+enum AuthAction {
+    /// Login with your ChatGPT account via OAuth
+    Login,
+    /// Remove stored OAuth tokens
+    Logout,
+    /// Show current auth status
+    Status,
 }
 
 /// Common CLI arguments shared across all subcommands.
@@ -104,7 +122,29 @@ fn dispatch(cli: Cli) -> Result<()> {
         Commands::Run(args) => run_command(args),
         Commands::Interactive(args) => interactive_command(args),
         Commands::Serve(args) => serve_command(args),
+        Commands::Auth(args) => auth_command(args),
     }
+}
+
+fn auth_command(args: AuthArgs) -> Result<()> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| CrabClawError::Network(format!("failed to start runtime: {e}")))?;
+
+    match args.action {
+        AuthAction::Login => {
+            rt.block_on(crate::core::auth::login())?;
+        }
+        AuthAction::Logout => {
+            crate::core::auth::clear_tokens()?;
+            println!("✅ Logged out. OAuth tokens removed.");
+        }
+        AuthAction::Status => {
+            crate::core::auth::status();
+        }
+    }
+    Ok(())
 }
 
 fn run_command(args: RunArgs) -> Result<()> {

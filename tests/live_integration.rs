@@ -1,13 +1,13 @@
 //! Live integration tests using real AI models.
 //!
 //! These tests call `process_message` with a real LLM API (configured via
-//! `.env.local` in the project root). They are skipped automatically when
-//! no API key is configured.
+//! `.env.local` or environment variables). They are skipped automatically
+//! when no API key is configured.
 //!
 //! Run with:
 //!   cargo test --test live_integration -- --nocapture
 //!
-//! Configure `.env.local` with:
+//! Configure via `.env.local` or env vars:
 //!   API_KEY=your-key
 //!   BASE_URL=https://your-api-endpoint
 //!   MODEL=anthropic:your-model
@@ -16,8 +16,14 @@
 
 use crabclaw::channels::telegram::process_message;
 use crabclaw::core::config::{CliConfigOverrides, load_runtime_config};
+use crabclaw::core::utils::safe_truncate;
 use serial_test::serial;
 use tempfile::TempDir;
+
+/// UTF-8-safe preview of a string for debug output.
+fn preview(s: &str, max: usize) -> &str {
+    safe_truncate(s, max)
+}
 
 /// Load config from `.env.local` in the project root.
 /// Returns None if API key is not configured, causing tests to be skipped.
@@ -85,10 +91,7 @@ async fn live_model_replies_to_simple_message() {
         "Expected a reply from model"
     );
     let output = response.assistant_output.unwrap();
-    println!(
-        "[live_chat] model replied: {}",
-        &output[..output.len().min(200)]
-    );
+    println!("[live_chat] model replied: {}", preview(&output, 200));
     assert!(!output.is_empty(), "Reply should not be empty");
 }
 
@@ -118,7 +121,7 @@ async fn live_tool_call_creates_file() {
         response
             .assistant_output
             .as_deref()
-            .map(|s| &s[..s.len().min(300)])
+            .map(|s| preview(s, 300))
     );
     if let Some(err) = &response.error {
         println!("[live_file_create] error: {}", err);
@@ -133,7 +136,7 @@ async fn live_tool_call_creates_file() {
         response
             .assistant_output
             .as_deref()
-            .map(|s| &s[..s.len().min(200)])
+            .map(|s| preview(s, 200))
     );
 
     let content = std::fs::read_to_string(&file_path).unwrap();
@@ -173,14 +176,11 @@ async fn live_tool_call_reads_file() {
         response.error
     );
     let output = response.assistant_output.unwrap_or_default();
-    println!(
-        "[live_file_read] model replied: {}",
-        &output[..output.len().min(300)]
-    );
+    println!("[live_file_read] model replied: {}", preview(&output, 300));
     assert!(
         output.contains("42"),
         "Model should have read the file and found '42', got: {}",
-        &output[..output.len().min(300)]
+        preview(&output, 300)
     );
 }
 
@@ -209,14 +209,11 @@ async fn live_tool_call_shell_exec() {
         response.error
     );
     let output = response.assistant_output.unwrap_or_default();
-    println!(
-        "[live_shell] model replied: {}",
-        &output[..output.len().min(300)]
-    );
+    println!("[live_shell] model replied: {}", preview(&output, 300));
     assert!(
         output.contains("CRABCLAW_OK"),
         "Model should have executed echo and returned 'CRABCLAW_OK', got: {}",
-        &output[..output.len().min(300)]
+        preview(&output, 300)
     );
 }
 
@@ -242,9 +239,7 @@ async fn live_multi_turn_write_then_read() {
 
     println!(
         "[live_multi_turn_1] reply: {:?}",
-        r1.assistant_output
-            .as_deref()
-            .map(|s| &s[..s.len().min(200)])
+        r1.assistant_output.as_deref().map(|s| preview(s, 200))
     );
     assert!(
         workspace.path().join("notes.txt").exists(),
@@ -262,14 +257,11 @@ async fn live_multi_turn_write_then_read() {
     .await;
 
     let output = r2.assistant_output.unwrap_or_default();
-    println!(
-        "[live_multi_turn_2] reply: {}",
-        &output[..output.len().min(300)]
-    );
+    println!("[live_multi_turn_2] reply: {}", preview(&output, 300));
     assert!(
         output.contains("1.0"),
         "Model should have read the file and found version '1.0', got: {}",
-        &output[..output.len().min(300)]
+        preview(&output, 300)
     );
 }
 
@@ -309,7 +301,7 @@ async fn live_diagnostic_project_workspace_tool_call() {
         response
             .assistant_output
             .as_deref()
-            .map(|s| &s[..s.len().min(300)])
+            .map(|s| preview(s, 300))
     );
     if let Some(err) = &response.error {
         println!("[diag] error: {}", err);
@@ -362,10 +354,7 @@ async fn live_agent_loop_basic_reply() {
         "Expected a reply from model"
     );
     let output = result.assistant_output.unwrap();
-    println!(
-        "[live_agent_loop_basic] reply: {}",
-        &output[..output.len().min(200)]
-    );
+    println!("[live_agent_loop_basic] reply: {}", preview(&output, 200));
     assert!(!output.is_empty(), "Reply should not be empty");
     assert!(!result.exit_requested);
 }
@@ -399,7 +388,7 @@ async fn live_agent_loop_streaming() {
     println!(
         "[live_agent_loop_stream] {} tokens collected, content: {}",
         token_count,
-        &collected[..collected.len().min(200)]
+        preview(&collected, 200)
     );
     assert!(token_count > 0, "Expected at least one streaming token");
     assert!(
@@ -430,10 +419,7 @@ async fn live_agent_loop_tool_call() {
 
     println!(
         "[live_agent_loop_tool] reply: {:?}, tool_rounds: {}",
-        result
-            .assistant_output
-            .as_deref()
-            .map(|s| &s[..s.len().min(300)]),
+        result.assistant_output.as_deref().map(|s| preview(s, 300)),
         result.tool_rounds
     );
     if let Some(err) = &result.error {
@@ -445,10 +431,7 @@ async fn live_agent_loop_tool_call() {
         file_path.exists(),
         "agent_test.txt was not created. Model likely did not use tool calling. \
          Response: {:?}",
-        result
-            .assistant_output
-            .as_deref()
-            .map(|s| &s[..s.len().min(200)])
+        result.assistant_output.as_deref().map(|s| preview(s, 200))
     );
 
     let content = std::fs::read_to_string(&file_path).unwrap();
@@ -492,10 +475,7 @@ async fn live_agent_loop_file_edit() {
 
     println!(
         "[live_agent_loop_edit] reply: {:?}, tool_rounds: {}",
-        result
-            .assistant_output
-            .as_deref()
-            .map(|s| &s[..s.len().min(300)]),
+        result.assistant_output.as_deref().map(|s| preview(s, 300)),
         result.tool_rounds
     );
     if let Some(err) = &result.error {

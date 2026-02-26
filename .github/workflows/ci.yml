@@ -54,6 +54,14 @@ jobs:
       - name: Run Telegram integration tests
         run: cargo test --test telegram_integration
 
+      - name: Run live E2E tests
+        if: ${{ env.API_KEY != '' }}
+        env:
+          API_KEY: ${{ secrets.LIVE_API_KEY }}
+          BASE_URL: ${{ secrets.LIVE_BASE_URL }}
+          MODEL: ${{ secrets.LIVE_MODEL }}
+        run: cargo test --test live_integration -- --nocapture
+
   build:
     name: Build Release
     runs-on: ubuntu-latest

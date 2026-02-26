@@ -223,6 +223,7 @@ async fn wait_for_callback(
         .ok_or_else(|| CrabClawError::Auth("no authorization code in callback".to_string()))?;
 
     // Verify state for CSRF protection
+    #[allow(clippy::collapsible_if)]
     if let Some(returned_state) = extract_query_param(&request, "state") {
         if returned_state != expected_state {
             return Err(CrabClawError::Auth(

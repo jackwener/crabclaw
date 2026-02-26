@@ -583,6 +583,7 @@ async fn send_openai_request_stream(
                                                             ));
                                                         }
                                                     }
+                                                    #[allow(clippy::collapsible_if)]
                                                     if let Some(args) = tc
                                                         .function
                                                         .as_ref()

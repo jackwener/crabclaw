@@ -1,3 +1,4 @@
+#![allow(clippy::collapsible_if)]
 //! OpenAI Codex Responses API provider.
 //!
 //! Codex models use `https://chatgpt.com/backend-api/codex/responses`

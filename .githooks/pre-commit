@@ -1,0 +1,21 @@
+#!/bin/sh
+# Pre-commit hook: Run cargo fmt and cargo clippy before each commit.
+# If either check fails, the commit is aborted.
+
+set -e
+
+echo "🔍 Running cargo fmt --check..."
+cargo fmt --all -- --check
+if [ $? -ne 0 ]; then
+    echo "❌ cargo fmt failed. Run 'cargo fmt --all' to fix."
+    exit 1
+fi
+
+echo "🔍 Running cargo clippy..."
+cargo clippy --all-targets -- -D warnings
+if [ $? -ne 0 ]; then
+    echo "❌ cargo clippy failed. Fix the warnings above."
+    exit 1
+fi
+
+echo "✅ Pre-commit checks passed."

@@ -37,15 +37,11 @@ impl LoopResult {
     /// Used by channels that want a single reply string.
     pub fn to_reply(&self) -> Option<String> {
         let mut parts = Vec::new();
-        if let Some(imm) = &self.immediate_output {
-            if !imm.is_empty() {
-                parts.push(imm.clone());
-            }
+        if let Some(imm) = self.immediate_output.as_ref().filter(|s| !s.is_empty()) {
+            parts.push(imm.clone());
         }
-        if let Some(asst) = &self.assistant_output {
-            if !asst.is_empty() {
-                parts.push(asst.clone());
-            }
+        if let Some(asst) = self.assistant_output.as_ref().filter(|s| !s.is_empty()) {
+            parts.push(asst.clone());
         }
         if let Some(err) = &self.error {
             parts.push(format!("Error: {err}"));

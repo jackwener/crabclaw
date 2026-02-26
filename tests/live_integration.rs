@@ -334,3 +334,133 @@ async fn live_diagnostic_project_workspace_tool_call() {
         content
     );
 }
+
+// ============================================================================
+// Live AgentLoop tests — test the AgentLoop abstraction directly
+// ============================================================================
+
+/// AgentLoop::handle_input returns a non-empty reply from real model.
+#[tokio::test]
+#[serial]
+async fn live_agent_loop_basic_reply() {
+    let config = require_live_config!();
+    let workspace = TempDir::new().unwrap();
+
+    let mut agent =
+        crabclaw::core::agent_loop::AgentLoop::open(&config, workspace.path(), "live_al_basic")
+            .unwrap();
+
+    let result = agent.handle_input("Say exactly: AGENT_LOOP_OK").await;
+
+    assert!(
+        result.error.is_none(),
+        "Unexpected error: {:?}",
+        result.error
+    );
+    assert!(
+        result.assistant_output.is_some(),
+        "Expected a reply from model"
+    );
+    let output = result.assistant_output.unwrap();
+    println!(
+        "[live_agent_loop_basic] reply: {}",
+        &output[..output.len().min(200)]
+    );
+    assert!(!output.is_empty(), "Reply should not be empty");
+    assert!(!result.exit_requested);
+}
+
+/// AgentLoop::handle_input_stream delivers tokens via callback.
+#[tokio::test]
+#[serial]
+async fn live_agent_loop_streaming() {
+    let config = require_live_config!();
+    let workspace = TempDir::new().unwrap();
+
+    let mut agent =
+        crabclaw::core::agent_loop::AgentLoop::open(&config, workspace.path(), "live_al_stream")
+            .unwrap();
+
+    let mut token_count = 0usize;
+    let mut collected = String::new();
+
+    let result = agent
+        .handle_input_stream("Say exactly: STREAM_OK", |token| {
+            token_count += 1;
+            collected.push_str(token);
+        })
+        .await;
+
+    assert!(
+        result.error.is_none(),
+        "Unexpected error: {:?}",
+        result.error
+    );
+    println!(
+        "[live_agent_loop_stream] {} tokens collected, content: {}",
+        token_count,
+        &collected[..collected.len().min(200)]
+    );
+    assert!(token_count > 0, "Expected at least one streaming token");
+    assert!(
+        result.assistant_output.is_some(),
+        "Expected assistant_output to be set"
+    );
+    let output = result.assistant_output.unwrap();
+    assert!(!output.is_empty(), "assistant_output should not be empty");
+}
+
+/// AgentLoop::handle_input triggers tool calling (file.write) with real model.
+#[tokio::test]
+#[serial]
+async fn live_agent_loop_tool_call() {
+    let config = require_live_config!();
+    let workspace = TempDir::new().unwrap();
+
+    let mut agent =
+        crabclaw::core::agent_loop::AgentLoop::open(&config, workspace.path(), "live_al_tool")
+            .unwrap();
+
+    let result = agent
+        .handle_input(
+            "Use the file.write tool to create a file called 'agent_test.txt' \
+             with the content 'AGENT_TOOL_OK'. You MUST use the file.write tool.",
+        )
+        .await;
+
+    println!(
+        "[live_agent_loop_tool] reply: {:?}, tool_rounds: {}",
+        result
+            .assistant_output
+            .as_deref()
+            .map(|s| &s[..s.len().min(300)]),
+        result.tool_rounds
+    );
+    if let Some(err) = &result.error {
+        println!("[live_agent_loop_tool] error: {}", err);
+    }
+
+    let file_path = workspace.path().join("agent_test.txt");
+    assert!(
+        file_path.exists(),
+        "agent_test.txt was not created. Model likely did not use tool calling. \
+         Response: {:?}",
+        result
+            .assistant_output
+            .as_deref()
+            .map(|s| &s[..s.len().min(200)])
+    );
+
+    let content = std::fs::read_to_string(&file_path).unwrap();
+    println!("[live_agent_loop_tool] file content: {}", content);
+    assert!(
+        content.contains("AGENT_TOOL_OK"),
+        "Expected 'AGENT_TOOL_OK' in file, got: {}",
+        content
+    );
+    assert!(
+        result.tool_rounds > 0,
+        "Expected at least 1 tool round, got: {}",
+        result.tool_rounds
+    );
+}

@@ -48,6 +48,9 @@ jobs:
       - name: Run CLI integration tests
         run: cargo test --test cli_run
 
+      - name: Run AgentLoop integration tests
+        run: cargo test --test agent_loop_integration
+
       - name: Run Telegram integration tests
         run: cargo test --test telegram_integration
 

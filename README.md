@@ -27,7 +27,7 @@ CrabClaw is an OpenClaw-compatible agentic coding toolchain written in Rust.
    ```bash
    # Option A: API Key
    cp .env.example .env.local
-   # Edit .env.local — set API_KEY, BASE_URL, MODEL
+   # Edit .env.local — set API_KEY, BASE_URL, MODEL (e.g. MODEL=openai:gpt-4o)
 
    # Option B: OAuth (use your ChatGPT Plus/Pro subscription)
    cargo run -- auth login
@@ -46,13 +46,13 @@ CrabClaw is an OpenClaw-compatible agentic coding toolchain written in Rust.
 
 ## LLM Configuration
 
-CrabClaw supports three provider modes, selected by the `MODEL` prefix:
+CrabClaw supports three provider modes. All models **must** have a provider prefix:
 
 ### Provider Modes
 
-| Prefix | Provider | API Format | Auth | Example Model |
+| Prefix | Provider | API Format | Auth | Example |
 |--------|----------|-----------|------|---------------|
-| *(none)* | OpenAI-compatible | Chat Completions | `API_KEY` | `gpt-4o` |
+| `openai:` | OpenAI-compatible | Chat Completions | `API_KEY` | `openai:gpt-4o` |
 | `anthropic:` | Anthropic | Messages API | `API_KEY` | `anthropic:claude-sonnet-4-20250514` |
 | `codex:` | OpenAI Codex | Responses API | OAuth | `codex:gpt-5.3-codex` |
 
@@ -64,7 +64,7 @@ Works with OpenAI, OpenRouter, GLM, DeepSeek, or any OpenAI-compatible endpoint.
 # .env.local
 API_KEY=sk-xxx
 BASE_URL=https://api.openai.com/v1      # or https://openrouter.ai/api/v1
-MODEL=gpt-4o                             # or anthropic:claude-sonnet-4-20250514
+MODEL=openai:gpt-4o                     # or anthropic:claude-sonnet-4-20250514
 ```
 
 ### Option B: OAuth + Codex (ChatGPT Plus/Pro subscription)
@@ -102,7 +102,7 @@ Settings resolve in this order (first wins):
 3. Environment variables (`API_KEY`, `BASE_URL`, `MODEL`)
 4. `.env.local` file
 5. OAuth tokens (fallback when no `API_KEY` is set)
-6. Built-in defaults (`MODEL=gpt-4o`)
+6. Built-in defaults (`MODEL=openai:gpt-4o`)
 
 ### Reasoning Effort (Codex models)
 

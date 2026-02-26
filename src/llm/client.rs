@@ -49,8 +49,13 @@ pub async fn send_chat_request(config: &AppConfig, request: &ChatRequest) -> Res
             crate::llm::codex::send_codex_request(codex_model, request, None).await
         } else if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {
             send_anthropic_request(config, request, anthropic_model).await
-        } else {
+        } else if request.model.strip_prefix("openai:").is_some() {
             send_openai_request(config, request).await
+        } else {
+            return Err(CrabClawError::Config(format!(
+                "MODEL '{}' must have a provider prefix: openai:<model>, anthropic:<model>, or codex:<model>",
+                request.model
+            )));
         };
 
         match &result {
@@ -107,8 +112,13 @@ pub async fn send_chat_request_stream(
 
         let result = if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {
             send_anthropic_request_stream(config, request, anthropic_model).await
-        } else {
+        } else if request.model.strip_prefix("openai:").is_some() {
             send_openai_request_stream(config, request).await
+        } else {
+            return Err(CrabClawError::Config(format!(
+                "MODEL '{}' must have a provider prefix: openai:<model>, anthropic:<model>, or codex:<model>",
+                request.model
+            )));
         };
 
         match &result {
@@ -404,7 +414,14 @@ async fn send_anthropic_request_stream(
 
 async fn send_openai_request(config: &AppConfig, request: &ChatRequest) -> Result<ChatResponse> {
     let url = format!("{}/chat/completions", config.api_base.trim_end_matches('/'));
-    debug!(url = %url, model = %request.model, "sending openai chat request");
+    let model = request
+        .model
+        .strip_prefix("openai:")
+        .unwrap_or(&request.model);
+    debug!(url = %url, model = %model, "sending openai chat request");
+
+    let mut api_request = request.clone();
+    api_request.model = model.to_string();
 
     let client = get_http_client();
 
@@ -412,7 +429,7 @@ async fn send_openai_request(config: &AppConfig, request: &ChatRequest) -> Resul
         .post(&url)
         .header("Authorization", format!("Bearer {}", config.api_key))
         .header("Content-Type", "application/json")
-        .json(request)
+        .json(&api_request)
         .send()
         .await
         .map_err(|e| {
@@ -461,13 +478,17 @@ async fn send_openai_request_stream(
     request: &ChatRequest,
 ) -> Result<mpsc::UnboundedReceiver<Result<StreamChunk>>> {
     let url = format!("{}/chat/completions", config.api_base.trim_end_matches('/'));
-    debug!(url = %url, model = %request.model, "sending openai chat streaming request");
+    let model = request
+        .model
+        .strip_prefix("openai:")
+        .unwrap_or(&request.model);
+    debug!(url = %url, model = %model, "sending openai chat streaming request");
 
     let client = get_http_client();
 
-    // We must pass string raw json to inject "stream": true if not present in ChatRequest.
-    // Let's just serialize it and inject.
-    let mut json_val = serde_json::to_value(request).map_err(CrabClawError::from)?;
+    let mut api_request = request.clone();
+    api_request.model = model.to_string();
+    let mut json_val = serde_json::to_value(&api_request).map_err(CrabClawError::from)?;
     if let Some(obj) = json_val.as_object_mut() {
         obj.insert("stream".to_string(), serde_json::Value::Bool(true));
     }
@@ -642,7 +663,7 @@ mod tests {
             profile: "test".to_string(),
             api_key: "test-key".to_string(),
             api_base: api_base.to_string(),
-            model: "test-model".to_string(),
+            model: "openai:test-model".to_string(),
             system_prompt: None,
             telegram_token: None,
             telegram_allow_from: vec![],
@@ -684,7 +705,7 @@ mod tests {
 
         let config = test_config(&server.url());
         let request = ChatRequest {
-            model: "test".to_string(),
+            model: "openai:test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
             tools: None,
@@ -711,7 +732,7 @@ mod tests {
 
         let config = test_config(&server.url());
         let request = ChatRequest {
-            model: "test".to_string(),
+            model: "openai:test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
             tools: None,
@@ -740,7 +761,7 @@ mod tests {
 
         let config = test_config(&server.url());
         let request = ChatRequest {
-            model: "test".to_string(),
+            model: "openai:test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
             tools: None,
@@ -782,7 +803,7 @@ mod tests {
 
         let config = test_config(&server.url());
         let request = ChatRequest {
-            model: "test".to_string(),
+            model: "openai:test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: Some(100),
             tools: None,
@@ -808,7 +829,7 @@ mod tests {
 
         let config = test_config(&server.url());
         let request = ChatRequest {
-            model: "test".to_string(),
+            model: "openai:test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
             tools: None,
@@ -834,7 +855,7 @@ mod tests {
 
         let config = test_config(&server.url());
         let request = ChatRequest {
-            model: "test".to_string(),
+            model: "openai:test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
             tools: None,
@@ -861,7 +882,7 @@ mod tests {
 
         let config = test_config(&server.url());
         let request = ChatRequest {
-            model: "test".to_string(),
+            model: "openai:test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
             tools: None,
@@ -887,7 +908,7 @@ mod tests {
 
         let config = test_config(&server.url());
         let request = ChatRequest {
-            model: "test".to_string(),
+            model: "openai:test".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
             tools: None,
@@ -920,7 +941,7 @@ mod tests {
 
         let config = test_config(&server.url());
         let request = ChatRequest {
-            model: "test-model".to_string(),
+            model: "openai:test-model".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
             tools: None,
@@ -962,7 +983,7 @@ mod tests {
 
         let config = test_config(&server.url());
         let request = ChatRequest {
-            model: "test-model".to_string(),
+            model: "openai:test-model".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
             tools: None,
@@ -1014,7 +1035,7 @@ mod tests {
 
         let config = test_config(&server.url());
         let request = ChatRequest {
-            model: "test-model".to_string(),
+            model: "openai:test-model".to_string(),
             messages: vec![Message::user("hello")],
             max_tokens: None,
             tools: None,

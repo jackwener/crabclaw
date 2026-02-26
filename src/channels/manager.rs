@@ -67,7 +67,7 @@ mod tests {
             profile: "test".to_string(),
             api_key: "key".to_string(),
             api_base: "https://api.example.com".to_string(),
-            model: "test-model".to_string(),
+            model: "openai:test-model".to_string(),
             system_prompt: None,
             telegram_token: telegram_token.map(String::from),
             telegram_allow_from: vec![],

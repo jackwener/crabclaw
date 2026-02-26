@@ -137,9 +137,20 @@ async fn send_anthropic_request(
         let anth_resp: crate::llm::api_types::AnthropicResponse = serde_json::from_str(&body)?;
         let chat_resp = anth_resp.into_chat_response();
         let has_tool_calls = chat_resp.tool_calls().is_some();
-        let content_preview = chat_resp
-            .assistant_content()
-            .map(|c| &c[..c.len().min(100)]);
+        let content_preview = chat_resp.assistant_content().map(|c| {
+            if c.len() <= 100 {
+                c
+            } else {
+                // Find a safe UTF-8 char boundary at or before byte 100
+                let safe = c
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .take_while(|&i| i <= 100)
+                    .last()
+                    .unwrap_or(0);
+                &c[..safe]
+            }
+        });
         info!(
             has_tool_calls = has_tool_calls,
             content_preview = ?content_preview,

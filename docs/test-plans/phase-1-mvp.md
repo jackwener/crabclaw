@@ -73,9 +73,50 @@
 | TP-041 | Telegram | Integration | Empty input ignored | ✅ |
 | TP-042 | Telegram | Integration | API error during tool loop | ✅ |
 
+### Phase 4: AgentLoop Integration (Mock LLM)
+
+| ID | Area | Type | Scenario | Status |
+|---|---|---|---|---|
+| TP-043 | AgentLoop | Integration | Natural language → model → reply | ✅ |
+| TP-044 | AgentLoop | Integration | Streaming tokens via callback | ✅ |
+| TP-045 | AgentLoop | Integration | Tool calling loop (non-streaming) | ✅ |
+| TP-046 | AgentLoop | Integration | Max tool iterations breaker | ✅ |
+| TP-047 | AgentLoop | Integration | Tape records conversation | ✅ |
+| TP-048 | AgentLoop | Integration | Command routing (,help) skips model | ✅ |
+| TP-049 | AgentLoop | Integration | Multi-turn session context | ✅ |
+| TP-050 | AgentLoop | Integration | Error propagation (API 500) | ✅ |
+| TP-051 | AgentLoop | Integration | Streaming + tool calling combined | ✅ |
+| TP-052 | AgentLoop | Integration | ,quit exits | ✅ |
+| TP-053 | AgentLoop | Integration | Empty input returns nothing | ✅ |
+| TP-054 | AgentLoop | Integration | Rate limit error (429) | ✅ |
+
+### Phase 5: P0 Features (file.edit + route_assistant)
+
+| ID | Area | Type | Scenario | Status |
+|---|---|---|---|---|
+| TP-055 | file.edit | Unit | First occurrence replacement | ✅ |
+| TP-056 | file.edit | Unit | Replace all occurrences | ✅ |
+| TP-057 | file.edit | Unit | Old text not found error | ✅ |
+| TP-058 | file.edit | Unit | File not found error | ✅ |
+| TP-059 | file.edit | Unit | Empty old text rejected | ✅ |
+| TP-060 | file.edit | Unit | Workspace escape blocked | ✅ |
+| TP-061 | file.edit | Unit | Delete text (new="") | ✅ |
+| TP-062 | file.edit | Unit | Multiline text edit | ✅ |
+| TP-063 | file.edit | Integration | Tool call via AgentLoop (mock) | ✅ |
+| TP-064 | route_assistant | Unit | No commands passthrough | ✅ |
+| TP-065 | route_assistant | Unit | Shell command detected | ✅ |
+| TP-066 | route_assistant | Unit | Internal command detected | ✅ |
+| TP-067 | route_assistant | Unit | Quit from assistant blocked | ✅ |
+| TP-068 | route_assistant | Unit | Mixed text + commands | ✅ |
+| TP-069 | route_assistant | Unit | Command in code fence | ✅ |
+| TP-070 | route_assistant | Unit | next_prompt() combines blocks | ✅ |
+| TP-071 | route_assistant | Integration | Shell command via AgentLoop | ✅ |
+| TP-072 | route_assistant | Integration | Normal text passthrough | ✅ |
+
 ## Current Stats
 
-- **Total automated tests**: 205 (177 unit + 10 CLI + 18 Telegram)
+- **Total automated tests**: 261 (218 unit + 15 AgentLoop + 10 CLI + 18 Telegram)
+- **Live E2E tests**: 10 (require API key)
 - **CI pipeline**: GitHub Actions on push/PR to `main`
 - **All tests passing**: ✅
 
@@ -85,5 +126,7 @@
 cargo fmt --check                                          # Format
 cargo clippy --all-targets --all-features -- -D warnings   # Lint
 cargo test                                                 # All tests
+cargo test --test agent_loop_integration                   # AgentLoop mock tests
 cargo test --test telegram_integration                     # Telegram only
+cargo test --test live_integration                         # Live E2E (needs API key)
 ```

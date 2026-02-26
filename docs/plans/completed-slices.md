@@ -129,8 +129,32 @@
 
 ---
 
+## S11: file.edit 工具
+
+**目标**：实现精确文件编辑（search-replace），比 file.write 更节省 token。
+
+| 文件 | 功能 |
+|------|------|
+| `src/tools/file_ops.rs` | `edit_file()` — search old text → replace new text，支持 replace_all |
+| `src/tools/registry.rs` | 注册 `file.edit` 到 builtin，添加 JSON Schema + execute_tool 分发 |
+
+---
+
+## S12: route_assistant (助手输出自动路由)
+
+**目标**：Model 输出中的逗号命令自动执行，启用 model 自主操作能力。
+
+| 文件 | 功能 |
+|------|------|
+| `src/core/router.rs` | `route_assistant()` 逐行扫描输出，检测并执行逗号命令 |
+| `src/core/router.rs` | `AssistantRouteResult` — visible_text / command_blocks / exit_requested |
+| `src/core/agent_loop.rs` | 在 `process_turn_result` 中集成 route_assistant |
+
+---
+
 ## 测试汇总
 
-- **S0–S10 总计**：205 tests（177 unit + 10 CLI integration + 18 Telegram integration）
+- **S0–S12 总计**：261 tests（218 unit + 15 AgentLoop integration + 10 CLI integration + 18 Telegram integration）
+- 另有 10 个 live E2E 测试（需 API Key）
 - 所有 `cargo fmt` / `clippy -D warnings` / `cargo test` 通过
 - GitHub Actions CI 在 `ubuntu-latest` + `macos-latest` 全绿

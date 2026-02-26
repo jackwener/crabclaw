@@ -361,7 +361,13 @@ fn search_file(workspace: &Path, file: &Path, query: &str, results: &mut Vec<Str
         if line.to_lowercase().contains(query) {
             let trimmed = line.trim();
             let display = if trimmed.len() > 120 {
-                format!("{}...", &trimmed[..117])
+                let safe = trimmed
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .take_while(|&i| i <= 117)
+                    .last()
+                    .unwrap_or(0);
+                format!("{}...", &trimmed[..safe])
             } else {
                 trimmed.to_string()
             };

@@ -29,12 +29,19 @@
 | P1 | Anthropic native adapter | `src/llm/client.rs` — message conversion + tool serialization | ✅ Done |
 | P1 | System prompt modular assembly | `src/core/context.rs` — 5-section prompt | ✅ Done |
 | P1 | Context window management | `src/core/context.rs` — sliding window truncation | ✅ Done |
+| P0 | AgentLoop abstraction | `src/core/agent_loop.rs` — unified route → model → tool → tape | ✅ Done |
+| P0 | ModelRunner separation | `src/core/model_runner.rs` — streaming + non-streaming inference | ✅ Done |
+| P1 | Progressive tool hinting | `src/tools/progressive.rs` — token-efficient on-demand schema expansion | ✅ Done |
+| P0 | File editing (search-replace) | `src/tools/file_ops.rs` — `file.edit` with replace_all | ✅ Done |
+| P0 | Assistant output routing | `src/core/router.rs` — `route_assistant` auto-executes comma commands | ✅ Done |
+| P1 | Live E2E test suite | `tests/live_integration.rs` — 10 tests with real API | ✅ Done |
 | P2 | Discord channel | — | Planned |
 | P2 | Voice / multimodal input | — | Planned |
 | P2 | Multi-agent orchestration | — | Planned |
 
 ## Summary
 
-- **15 of 18** features implemented and tested.
-- **205 automated tests** covering all completed features.
+- **21 of 24** features implemented and tested.
+- **261 automated tests** covering all completed features (218 unit + 15 AgentLoop + 10 CLI + 18 Telegram).
+- **10 live E2E tests** with real API calls.
 - CI pipeline (GitHub Actions) is green on `ubuntu-latest` + `macos-latest`.

@@ -9,10 +9,13 @@ CrabClaw is an OpenClaw-compatible agentic coding toolchain written in Rust.
 
 - **Multi-channel**: CLI, interactive REPL, and Telegram bot with whitelist access control
 - **Model agnostic**: OpenRouter (OpenAI format) and native Anthropic adapters
+- **AgentLoop**: Unified abstraction: route → model → tool → tape in a single `handle_input` call
 - **Skill engine**: Auto-discovers `.agent/skills/` and bridges them as LLM-callable tools
 - **Shell execution**: Run shell commands via `,git status` or `shell.exec` tool, with failure self-correction
-- **File operations**: `file.read`, `file.write`, `file.list`, `file.search` with workspace-sandboxed security
+- **File operations**: `file.read`, `file.write`, `file.edit`, `file.list`, `file.search` with workspace-sandboxed security
+- **Assistant routing**: Model output is scanned for comma-commands and auto-executed (`route_assistant`)
 - **Tool calling loop**: Up to 5-iteration autonomous reasoning in REPL and Telegram
+- **Progressive tool view**: Token-efficient tool hinting — full schemas expand on demand
 - **Tape system**: Append-only JSONL session recording with anchors, search, handoff, and context truncation
 - **System prompt**: 3-tier priority — config override > `.agent/system-prompt.md` > built-in default
 - **Profile resolution**: `.env.local`, environment variables, CLI flags with deterministic precedence
@@ -61,7 +64,7 @@ The project version is 0.1.0...
 ## Development
 
 ```bash
-cargo test               # Run all 205 tests
+cargo test               # Run all 261 tests
 cargo clippy             # Lint check
 cargo fmt                # Format
 ./scripts/smoke-test.sh  # Full verification (build + clippy + tests + live API)

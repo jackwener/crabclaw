@@ -20,9 +20,11 @@ CrabClaw 致力于在一个统一的环境中，完美地将 **"命令执行 (Co
 ```text
 src/
 ├── core/               # 核心路由、配置与领域逻辑
+│   ├── agent_loop.rs   # 统一 AgentLoop 抽象：route → model → tool → tape
+│   ├── model_runner.rs # ModelRunner：LLM 推理（流式 + 非流式）+ 工具调用循环
 │   ├── config.rs       # 环境变量解析，多 Profile 配置覆盖
 │   ├── error.rs        # 全局错误枚举与领域异常处理
-│   ├── router.rs       # 核心路由与分发逻辑（区分命令与自然语言）
+│   ├── router.rs       # 核心路由与分发逻辑 + 助手输出自动路由 (route_assistant)
 │   ├── input.rs        # 输入标准化（处理 CLI 参数传入还是 Stdin）
 │   ├── command.rs      # 命令检测（区分内部命令与 Shell 命令）
 │   ├── context.rs      # Context Window 构建器（滑动窗口截断 + 模块化系统提示词）
@@ -35,7 +37,8 @@ src/
 ├── tools/              # LLM 函数调用与插件引擎
 │   ├── registry.rs     # 工具定义 Schema、执行多路复用器、技能桥接
 │   ├── skills.rs       # 自动发现并解析 .agent/skills 目录内的 Markdown 插件
-│   └── file_ops.rs     # 工作区沙箱化的 file.read, file.write, file.list, file.search
+│   ├── file_ops.rs     # 工作区沙箱化的 file.read, file.write, file.edit, file.list, file.search
+│   └── progressive.rs  # ProgressiveToolView：按需展开工具 Schema（节省 token）
 ├── channels/           # 多渠道输入/输出适配器 (Channels)
 │   ├── base.rs         # 适用于各种接口渠道的通用 Trait
 │   ├── manager.rs      # 用于管理所有后台 Channel 任务的调度器
@@ -49,26 +52,28 @@ src/
 一个完整的智能体 (Agentic) 循环大致如下：
 
 1. **接收输入**：用户通过某个 `Channel`（例如 CLI、交互式 REPL、Telegram）发送一条消息。
-2. **路由寻址**：
+2. **AgentLoop 分发**：`core::agent_loop::AgentLoop` 作为统一入口，将 route → model → tool → tape 封装为单一的 `handle_input` / `handle_input_stream` 调用。
+3. **路由寻址**：
    - `core::router::route_user` 会检查这条消息。
    - 如果它以 `,` 开头，它会作为内部命令去执行。执行结果会被当作短路输出立即返回。
    - 如果它是自然语言，路由器会为其打上需要模型执行的标记 (`enter_model = true`)。
-3. **组装上下文**：这条文本会作为一条 `"user"` 消息追加到 `tape::store::TapeStore` 中。然后由 `core::context::build_messages` 重构出整个上下文历史（滑动窗口截断，默认 50 条）。
-4. **系统提示词组装**：`core::context::build_system_prompt` 从 5 个模块化部分组装系统提示词：
+4. **组装上下文**：这条文本会作为一条 `"user"` 消息追加到 `tape::store::TapeStore` 中。然后由 `core::context::build_messages` 重构出整个上下文历史（滑动窗口截断，默认 50 条）。
+5. **系统提示词组装**：`core::context::build_system_prompt` 从 5 个模块化部分组装系统提示词：
    - **Identity**：定义 CrabClaw 的角色与行为准则。
    - **配置覆盖 / 工作区提示词**：3 层优先级（配置 > `.agent/system-prompt.md` > 内置默认）。
    - **运行时与工作区上下文**：动态注入工作区路径和运行时约定。
    - **上下文 / 日期时间**：通过 `chrono::Local::now()` 注入当前时间戳。
-   - **工具契约**：列出可用工具及使用约定。
-5. **模型推理**：`llm::client::send_chat_request` 向模型发起请求，同时带上上下文和工具列表。
+   - **工具契约**：列出可用工具及使用约定（使用 `ProgressiveToolView` 节省 token）。
+6. **模型推理**：`core::model_runner::ModelRunner` 向模型发起请求，同时带上上下文和工具列表。
    - 对于 Anthropic 模型，**消息转换层** (`convert_messages_for_anthropic`) 会自动将统一格式转换为 Anthropic 专用格式：
      - `role: tool` 消息 → `role: user` + `tool_result` content blocks。
      - 带 `tool_calls` 的 `assistant` 消息 → 结构化的 `tool_use` content blocks。
      - 工具定义 → `AnthropicToolDefinition` + `input_schema`。
-6. **处理输出**：
-   - 如果模型返回纯文本，这会被视作最终的 `"assistant"` 响应，保存回 Tape，并通过 `Channel` 显示给用户。
+7. **处理输出**：
+   - 如果模型返回纯文本，`core::router::route_assistant` 会扫描输出中的逗号命令并自动执行。
+   - 如果没有检测到命令，文本原样显示给用户。
    - 如果模型返回 `tool_calls`，执行循环会将其拦截。
-7. **工具调用循环**：运行时通过 `tools::registry::execute_tool` 执行模型请求的工具，生成带有 `"tool"` 角色的执行结果，将工具调用请求和工具输出一并追加到 Tape 中，最后再次调用 LLM 依据工具返回的内容进行推理（最高 `MAX_TOOL_ITERATIONS = 5` 轮）。
+8. **工具调用循环**：运行时通过 `tools::registry::execute_tool` 执行模型请求的工具，生成带有 `"tool"` 角色的执行结果，将工具调用请求和工具输出一并追加到 Tape 中，最后再次调用 LLM 依据工具返回的内容进行推理（最高 `MAX_TOOL_ITERATIONS = 5` 轮）。
 
 ## 4. 功能特性
 
@@ -78,18 +83,22 @@ src/
 - **技能引擎**：自动扫描 `.agent/skills/`，将 Markdown 技能说明桥接为 `skill.<name>` 工具。
 - **Shell 命令执行**：未知 `,` 命令通过 `/bin/sh -c` 执行。失败结果包装为 XML 上下文供 LLM 自我纠正。30 秒超时保护。
 - **工具调用循环**：REPL 和 Telegram 均支持最多 5 轮自主多步推理。支持 `shell.exec`、`skill.*`、`file.*` 及自定义工具。
-- **文件操作**：`file.read`、`file.write`、`file.list`、`file.search` — 全部工作区沙箱化。
+- **文件操作**：`file.read`、`file.write`、`file.edit`、`file.list`、`file.search` — 全部工作区沙箱化。
+- **助手输出路由**：`route_assistant` 扫描模型输出中的逗号命令并自动执行，支持 model 自主纠错和命令链式调用。
+- **渐进式工具视图**：省 token 的工具提示——系统提示词仅包含工具名和简述，完整 Schema 按需展开。
+- **AgentLoop 抽象**：统一 `AgentLoop` 结构体封装 route → model → tool → tape，提供 `handle_input` / `handle_input_stream` API。
 - **系统提示词**：模块化 5 段式组装，3 层优先级覆盖。
 - **上下文窗口管理**：滑动窗口截断（可配置 `MAX_CONTEXT_MESSAGES`，默认 50 条），自动注入截断通知。
 
 ## 5. 测试架构
 
-CrabClaw 维护 205 个自动化测试，分为三层：
+CrabClaw 维护 261 个自动化测试，分为四层：
 
 | 层级 | 数量 | 范围 |
 |------|------|------|
-| 单元测试 (`cargo test --lib`) | 177 | 核心逻辑、配置、路由、tape、工具、文件操作、API 类型 |
+| 单元测试 (`cargo test --lib`) | 218 | 核心逻辑、配置、路由、tape、工具、文件操作、API 类型、渐进式视图 |
+| AgentLoop 集成测试 (`tests/agent_loop_integration.rs`) | 15 | 完整 AgentLoop 管线（mock LLM）：工具调用、流式、路由、file.edit、route_assistant |
 | CLI 集成测试 (`tests/cli_run.rs`) | 10 | 端到端 CLI 行为 |
 | Telegram 集成测试 (`tests/telegram_integration.rs`) | 18 | 通过 `process_message` 的全链路管线（mock LLM API） |
 
-Telegram 集成测试使用 `mockito` 模拟 LLM 响应，覆盖：OpenAI/Anthropic 文本回复、工具调用循环（单工具/多工具/最大迭代中断）、系统提示词验证、文件操作管线、错误传播（API 故障、限流、未知工具）。
+另有 **10 个 live E2E 测试** (`tests/live_integration.rs`)，在设置 `OPENROUTER_API_KEY` 时运行，覆盖基本回复、流式、工具调用、文件编辑和 AgentLoop 完整操作。

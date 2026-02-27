@@ -309,6 +309,7 @@ fn escape_html(s: &str) -> String {
 /// - ```` ```lang ... ``` ```` → `<pre><code>...</code></pre>`
 /// - `[text](url)` → `<a href="url">text</a>`
 /// - `~~text~~` → `<s>text</s>`
+#[allow(clippy::collapsible_if)]
 fn markdown_to_telegram_html(text: &str) -> String {
     let lines: Vec<&str> = text.split('\n').collect();
     let mut result_lines: Vec<String> = Vec::new();

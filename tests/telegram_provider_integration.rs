@@ -24,7 +24,7 @@ async fn routes_to_anthropic_model_and_returns_reply() {
 
     let config = anthropic_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response = process_message("hi", &config, workspace.path(), "test:anthropic").await;
+    let response = process_message("hi", &config, workspace.path(), "test:anthropic", None).await;
 
     mock.assert_async().await;
     assert_ok_reply(&response, "Hello from Anthropic mock LLM!");
@@ -64,8 +64,14 @@ async fn anthropic_tool_call_then_final_reply() {
 
     let config = anthropic_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response =
-        process_message("what tools?", &config, workspace.path(), "test:anth_tool").await;
+    let response = process_message(
+        "what tools?",
+        &config,
+        workspace.path(),
+        "test:anth_tool",
+        None,
+    )
+    .await;
 
     final_mock.assert_async().await;
     assert!(response.error.is_none());
@@ -106,7 +112,14 @@ async fn anthropic_error_during_tool_loop_is_propagated() {
 
     let config = anthropic_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response = process_message("run shell", &config, workspace.path(), "test:anth_err").await;
+    let response = process_message(
+        "run shell",
+        &config,
+        workspace.path(),
+        "test:anth_err",
+        None,
+    )
+    .await;
     assert_has_error(&response);
 }
 
@@ -139,7 +152,7 @@ async fn system_prompt_includes_workspace_override_for_anthropic() {
     )
     .unwrap();
 
-    let _ = process_message("hi", &config, workspace.path(), "test:ws_prompt").await;
+    let _ = process_message("hi", &config, workspace.path(), "test:ws_prompt", None).await;
     mock.assert_async().await;
 }
 
@@ -157,6 +170,13 @@ async fn openai_system_prompt_contains_identity_contract() {
 
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let _ = process_message("ping", &config, workspace.path(), "test:prompt_openai").await;
+    let _ = process_message(
+        "ping",
+        &config,
+        workspace.path(),
+        "test:prompt_openai",
+        None,
+    )
+    .await;
     mock.assert_async().await;
 }

@@ -44,6 +44,7 @@ async fn e2e_schedule_add_one_shot() {
         &config,
         workspace.path(),
         "test:schedule_add",
+        None,
     )
     .await;
 
@@ -80,6 +81,7 @@ async fn e2e_schedule_list_empty() {
         &config,
         workspace.path(),
         "test:schedule_list",
+        None,
     )
     .await;
 
@@ -118,6 +120,7 @@ async fn e2e_schedule_add_missing_message_error() {
         &config,
         workspace.path(),
         "test:schedule_no_msg",
+        None,
     )
     .await;
 
@@ -155,6 +158,7 @@ async fn e2e_schedule_remove_nonexistent() {
         &config,
         workspace.path(),
         "test:schedule_rm",
+        None,
     )
     .await;
 

@@ -53,7 +53,7 @@ async fn send_live_in(
     workspace: &std::path::Path,
     session: &str,
 ) -> crabclaw::channels::base::ChannelResponse {
-    process_message(text, config, workspace, session).await
+    process_message(text, config, workspace, session, None).await
 }
 
 /// Macro to skip test when no live config is available.
@@ -84,6 +84,7 @@ async fn live_model_replies_to_simple_message() {
         &config,
         workspace.path(),
         "live_test:chat",
+        None,
     )
     .await;
 
@@ -328,9 +329,13 @@ async fn live_agent_loop_basic_reply() {
     let config = require_live_config!();
     let workspace = TempDir::new().unwrap();
 
-    let mut agent =
-        crabclaw::core::agent_loop::AgentLoop::open(&config, workspace.path(), "live_al_basic")
-            .unwrap();
+    let mut agent = crabclaw::core::agent_loop::AgentLoop::open(
+        &config,
+        workspace.path(),
+        "live_al_basic",
+        None,
+    )
+    .unwrap();
 
     let result = agent.handle_input("Say exactly: AGENT_LOOP_OK").await;
 
@@ -348,9 +353,13 @@ async fn live_agent_loop_streaming() {
     let config = require_live_config!();
     let workspace = TempDir::new().unwrap();
 
-    let mut agent =
-        crabclaw::core::agent_loop::AgentLoop::open(&config, workspace.path(), "live_al_stream")
-            .unwrap();
+    let mut agent = crabclaw::core::agent_loop::AgentLoop::open(
+        &config,
+        workspace.path(),
+        "live_al_stream",
+        None,
+    )
+    .unwrap();
 
     let mut token_count = 0usize;
     let mut collected = String::new();
@@ -384,9 +393,13 @@ async fn live_agent_loop_tool_call() {
     let config = require_live_config!();
     let workspace = TempDir::new().unwrap();
 
-    let mut agent =
-        crabclaw::core::agent_loop::AgentLoop::open(&config, workspace.path(), "live_al_tool")
-            .unwrap();
+    let mut agent = crabclaw::core::agent_loop::AgentLoop::open(
+        &config,
+        workspace.path(),
+        "live_al_tool",
+        None,
+    )
+    .unwrap();
 
     let result = agent
         .handle_input(
@@ -440,9 +453,13 @@ async fn live_agent_loop_file_edit() {
     )
     .unwrap();
 
-    let mut agent =
-        crabclaw::core::agent_loop::AgentLoop::open(&config, workspace.path(), "live_al_edit")
-            .unwrap();
+    let mut agent = crabclaw::core::agent_loop::AgentLoop::open(
+        &config,
+        workspace.path(),
+        "live_al_edit",
+        None,
+    )
+    .unwrap();
 
     let result = agent
         .handle_input(

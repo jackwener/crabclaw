@@ -141,15 +141,14 @@ async fn handle_message(
         }
     }
 
-    // Register scheduler notifier for this chat (so reminders get delivered here)
-    {
-        use crate::tools::schedule::global_scheduler;
+    // Build per-session notifier for schedule jobs (Bub-style context-bound callback)
+    let notifier: Option<crate::tools::schedule::Notifier> = {
         let tg_token = config.telegram_token.clone().unwrap_or_default();
         let tg_chat_id = chat_id.0;
-        global_scheduler().set_notifier(move |text| {
+        Some(std::sync::Arc::new(move |text: String| {
             let token = tg_token.clone();
             let chat = tg_chat_id;
-            let msg_text = text.clone();
+            let msg_text = text;
             // Fire-and-forget: spawn a thread to send notification via Telegram API
             std::thread::spawn(move || {
                 let url = format!("https://api.telegram.org/bot{token}/sendMessage");
@@ -162,8 +161,8 @@ async fn handle_message(
                     }))
                     .send();
             });
-        });
-    }
+        }))
+    };
 
     let session_id = format!("telegram:{}", chat_id.0);
     info!(
@@ -184,7 +183,7 @@ async fn handle_message(
     });
 
     // Process through CrabClaw router + model + tool calling
-    let response = process_message(&text, &config, workspace, &session_id).await;
+    let response = process_message(&text, &config, workspace, &session_id, notifier).await;
 
     // Stop typing indicator
     typing_handle.abort();
@@ -245,17 +244,19 @@ pub async fn process_message(
     config: &AppConfig,
     workspace: &std::path::Path,
     session_id: &str,
+    notifier: Option<crate::tools::schedule::Notifier>,
 ) -> ChannelResponse {
-    let mut agent = match crate::core::agent_loop::AgentLoop::open(config, workspace, session_id) {
-        Ok(a) => a,
-        Err(e) => {
-            warn!("telegram.agent_loop.error: {e}");
-            return ChannelResponse {
-                error: Some(format!("{e}")),
-                ..Default::default()
-            };
-        }
-    };
+    let mut agent =
+        match crate::core::agent_loop::AgentLoop::open(config, workspace, session_id, notifier) {
+            Ok(a) => a,
+            Err(e) => {
+                warn!("telegram.agent_loop.error: {e}");
+                return ChannelResponse {
+                    error: Some(format!("{e}")),
+                    ..Default::default()
+                };
+            }
+        };
 
     let result = agent.handle_input(text).await;
 

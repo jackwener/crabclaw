@@ -19,7 +19,7 @@ async fn routes_to_model_and_returns_reply() {
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
 
-    let mut agent = AgentLoop::open(&config, workspace.path(), "test_session").unwrap();
+    let mut agent = AgentLoop::open(&config, workspace.path(), "test_session", None).unwrap();
     let result = agent.handle_input("hello").await;
 
     mock.assert_async().await;
@@ -42,7 +42,7 @@ async fn command_routing_help_does_not_call_model() {
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
 
-    let mut agent = AgentLoop::open(&config, workspace.path(), "test_cmd").unwrap();
+    let mut agent = AgentLoop::open(&config, workspace.path(), "test_cmd", None).unwrap();
     let result = agent.handle_input(",help").await;
 
     mock.assert_async().await;
@@ -73,7 +73,7 @@ async fn multi_turn_session_keeps_context_on_same_agent() {
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
 
-    let mut agent = AgentLoop::open(&config, workspace.path(), "test_multi").unwrap();
+    let mut agent = AgentLoop::open(&config, workspace.path(), "test_multi", None).unwrap();
     let r1 = agent.handle_input("What is your name?").await;
     let r2 = agent.handle_input("What did I ask you?").await;
 
@@ -98,7 +98,7 @@ async fn api_error_is_propagated() {
 
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let mut agent = AgentLoop::open(&config, workspace.path(), "test_error").unwrap();
+    let mut agent = AgentLoop::open(&config, workspace.path(), "test_error", None).unwrap();
 
     let result = agent.handle_input("trigger error").await;
     assert!(result.error.is_some());

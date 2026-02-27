@@ -15,6 +15,8 @@ use crate::core::model_runner::{ModelRunner, ModelTurnResult};
 use crate::core::router::route_user;
 use crate::tape::store::TapeStore;
 use crate::tools::progressive::ProgressiveToolView;
+use crate::tools::registry::ToolContext;
+use crate::tools::schedule::Notifier;
 
 /// Output from one agent loop turn.
 #[derive(Debug, Default)]
@@ -68,13 +70,21 @@ pub struct AgentLoop<'a> {
     workspace: &'a Path,
     tape: TapeStore,
     tool_view: ProgressiveToolView,
+    tool_ctx: ToolContext,
 }
 
 impl<'a> AgentLoop<'a> {
     /// Create a new agent loop for a session.
     ///
     /// Opens or creates the tape file for `session_id`.
-    pub fn open(config: &'a AppConfig, workspace: &'a Path, session_id: &str) -> Result<Self> {
+    /// `notifier` is an optional callback for delivering notifications
+    /// (e.g. schedule reminders) back to the originating channel.
+    pub fn open(
+        config: &'a AppConfig,
+        workspace: &'a Path,
+        session_id: &str,
+        notifier: Option<Notifier>,
+    ) -> Result<Self> {
         let tape_dir = workspace.join(".crabclaw");
         let tape_name = session_id.replace(':', "_");
         let tape = TapeStore::open(&tape_dir, &tape_name).map_err(CrabClawError::Io)?;
@@ -85,11 +95,17 @@ impl<'a> AgentLoop<'a> {
 
         let tool_view = ProgressiveToolView::new(registry);
 
+        let tool_ctx = match notifier {
+            Some(n) => ToolContext { notifier: Some(n) },
+            None => ToolContext::empty(),
+        };
+
         let mut loop_instance = Self {
             config,
             workspace,
             tape,
             tool_view,
+            tool_ctx,
         };
 
         loop_instance
@@ -151,7 +167,7 @@ impl<'a> AgentLoop<'a> {
         // 5. Run model turn with tool calling loop
         let runner = ModelRunner::new(self.config, self.workspace);
         let turn_result = runner
-            .run_turn(&mut messages, tools.as_deref(), &self.tape)
+            .run_turn(&mut messages, tools.as_deref(), &self.tape, &self.tool_ctx)
             .await;
 
         // 6. Process result
@@ -213,7 +229,13 @@ impl<'a> AgentLoop<'a> {
         // 5. Run streaming model turn with tool calling loop
         let runner = ModelRunner::new(self.config, self.workspace);
         let turn_result = runner
-            .run_turn_stream(&mut messages, tools.as_deref(), &self.tape, on_token)
+            .run_turn_stream(
+                &mut messages,
+                tools.as_deref(),
+                &self.tape,
+                &self.tool_ctx,
+                on_token,
+            )
             .await;
 
         // 6. Process result
@@ -328,7 +350,7 @@ mod tests {
     fn agent_loop_opens_and_creates_tape() {
         let dir = tempdir().unwrap();
         let config = test_config();
-        let loop_ = AgentLoop::open(&config, dir.path(), "test_session");
+        let loop_ = AgentLoop::open(&config, dir.path(), "test_session", None);
         assert!(loop_.is_ok());
         // Tape file should exist
         let tape_path = dir.path().join(".crabclaw").join("test_session.jsonl");
@@ -339,7 +361,7 @@ mod tests {
     fn agent_loop_replaces_colons_in_session_id() {
         let dir = tempdir().unwrap();
         let config = test_config();
-        let loop_ = AgentLoop::open(&config, dir.path(), "telegram:12345");
+        let loop_ = AgentLoop::open(&config, dir.path(), "telegram:12345", None);
         assert!(loop_.is_ok());
         let tape_path = dir.path().join(".crabclaw").join("telegram_12345.jsonl");
         assert!(tape_path.exists());
@@ -349,7 +371,7 @@ mod tests {
     async fn handle_input_empty_returns_no_output() {
         let dir = tempdir().unwrap();
         let config = test_config();
-        let mut loop_ = AgentLoop::open(&config, dir.path(), "test").unwrap();
+        let mut loop_ = AgentLoop::open(&config, dir.path(), "test", None).unwrap();
         let result = loop_.handle_input("").await;
         assert!(result.immediate_output.is_none());
         assert!(result.assistant_output.is_none());
@@ -360,7 +382,7 @@ mod tests {
     async fn handle_input_help_command() {
         let dir = tempdir().unwrap();
         let config = test_config();
-        let mut loop_ = AgentLoop::open(&config, dir.path(), "test").unwrap();
+        let mut loop_ = AgentLoop::open(&config, dir.path(), "test", None).unwrap();
         let result = loop_.handle_input(",help").await;
         assert!(result.immediate_output.is_some());
         assert!(result.assistant_output.is_none());
@@ -371,7 +393,7 @@ mod tests {
     async fn handle_input_quit_exits() {
         let dir = tempdir().unwrap();
         let config = test_config();
-        let mut loop_ = AgentLoop::open(&config, dir.path(), "test").unwrap();
+        let mut loop_ = AgentLoop::open(&config, dir.path(), "test", None).unwrap();
         let result = loop_.handle_input(",quit").await;
         assert!(result.exit_requested);
     }
@@ -380,7 +402,7 @@ mod tests {
     fn reset_tape_clears_and_re_bootstraps() {
         let dir = tempdir().unwrap();
         let config = test_config();
-        let mut loop_ = AgentLoop::open(&config, dir.path(), "test").unwrap();
+        let mut loop_ = AgentLoop::open(&config, dir.path(), "test", None).unwrap();
         loop_.tape_mut().append_message("user", "hello").unwrap();
         assert!(loop_.reset_tape().is_ok());
         // After reset, entries should be minimal (just bootstrap anchor)

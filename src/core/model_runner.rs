@@ -13,6 +13,7 @@ use crate::llm::api_types::{
     ChatRequest, Message, StreamChunk, ToolCall, ToolCallFunction, ToolDefinition,
 };
 use crate::tape::store::TapeStore;
+use crate::tools::registry::ToolContext;
 
 /// Default maximum tool-calling rounds per turn.
 const DEFAULT_MAX_TOOL_ITERATIONS: usize = 5;
@@ -68,6 +69,7 @@ impl<'a> ModelRunner<'a> {
         messages: &mut Vec<Message>,
         tools: Option<&[ToolDefinition]>,
         tape: &TapeStore,
+        tool_ctx: &ToolContext,
     ) -> ModelTurnResult {
         let mut result = ModelTurnResult::default();
 
@@ -101,6 +103,7 @@ impl<'a> ModelRunner<'a> {
                                 &tc.function.arguments,
                                 tape,
                                 self.workspace,
+                                tool_ctx,
                             );
                             debug!(
                                 tool = %tc.function.name,
@@ -140,6 +143,7 @@ impl<'a> ModelRunner<'a> {
         messages: &mut Vec<Message>,
         tools: Option<&[ToolDefinition]>,
         tape: &TapeStore,
+        tool_ctx: &ToolContext,
         mut on_token: F,
     ) -> ModelTurnResult
     where
@@ -221,6 +225,7 @@ impl<'a> ModelRunner<'a> {
                                 &tc.function.arguments,
                                 tape,
                                 self.workspace,
+                                tool_ctx,
                             );
                             debug!(
                                 tool = %tc.function.name,

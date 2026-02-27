@@ -38,7 +38,14 @@ async fn render_via_pipeline(markdown: &str) -> String {
 
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response = process_message("test input", &config, workspace.path(), "test:md_render").await;
+    let response = process_message(
+        "test input",
+        &config,
+        workspace.path(),
+        "test:md_render",
+        None,
+    )
+    .await;
 
     let reply = response
         .to_reply()

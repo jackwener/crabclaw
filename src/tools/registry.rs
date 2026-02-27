@@ -1,6 +1,36 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde::Serialize;
+
+use crate::tools::schedule::Notifier;
+
+/// Execution context passed to tools during a model turn.
+///
+/// Carries channel-specific capabilities (e.g. notification delivery)
+/// so each tool invocation has access to its session context.
+/// Inspired by Bub's context-bound callback pattern.
+#[derive(Clone, Default)]
+pub struct ToolContext {
+    /// Optional notification callback for the current session.
+    /// When set, schedule jobs capture this to deliver reminders
+    /// back to the originating channel (e.g. Telegram chat).
+    pub notifier: Option<Notifier>,
+}
+
+impl ToolContext {
+    /// Create an empty context (no notification capability).
+    pub fn empty() -> Self {
+        Self { notifier: None }
+    }
+
+    /// Create a context with a notification callback.
+    pub fn with_notifier<F: Fn(String) + Send + Sync + 'static>(f: F) -> Self {
+        Self {
+            notifier: Some(Arc::new(f)),
+        }
+    }
+}
 
 /// Metadata for a registered tool.
 #[derive(Debug, Clone, Serialize)]
@@ -328,11 +358,14 @@ pub fn tool_parameters(name: &str) -> serde_json::Value {
 /// Execute a tool by name and return the result as a string.
 ///
 /// Supports builtin tools, `shell.exec`, and skill tools.
+/// The `ctx` parameter carries session-specific context (e.g. notification
+/// callbacks for schedule jobs).
 pub fn execute_tool(
     name: &str,
     args: &str,
     tape: &crate::tape::store::TapeStore,
     workspace: &std::path::Path,
+    ctx: &ToolContext,
 ) -> String {
     match name {
         "tape.info" => {
@@ -483,7 +516,12 @@ pub fn execute_tool(
                 Ok(v) => v["interval_seconds"].as_u64(),
                 Err(_) => None,
             };
-            global_scheduler().add_job(&message, after_seconds, interval_seconds)
+            global_scheduler().add_job(
+                &message,
+                after_seconds,
+                interval_seconds,
+                ctx.notifier.clone(),
+            )
         }
         "schedule.list" => {
             use crate::tools::schedule::global_scheduler;
@@ -609,6 +647,7 @@ mod tests {
             r#"{"command": "echo tool_works"}"#,
             &tape,
             dir.path(),
+            &ToolContext::empty(),
         );
         assert!(result.contains("tool_works"));
     }
@@ -617,7 +656,7 @@ mod tests {
     fn execute_shell_exec_empty_args() {
         let dir = tempfile::tempdir().unwrap();
         let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
-        let result = execute_tool("shell.exec", "", &tape, dir.path());
+        let result = execute_tool("shell.exec", "", &tape, dir.path(), &ToolContext::empty());
         assert!(result.contains("no command"));
     }
 
@@ -625,7 +664,13 @@ mod tests {
     fn execute_file_read_invalid_json_args() {
         let dir = tempfile::tempdir().unwrap();
         let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
-        let result = execute_tool("file.read", "not-json", &tape, dir.path());
+        let result = execute_tool(
+            "file.read",
+            "not-json",
+            &tape,
+            dir.path(),
+            &ToolContext::empty(),
+        );
         assert!(result.contains("'path' argument is required"));
     }
 
@@ -633,7 +678,13 @@ mod tests {
     fn execute_file_write_missing_path_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
-        let result = execute_tool("file.write", r#"{"content":"hello"}"#, &tape, dir.path());
+        let result = execute_tool(
+            "file.write",
+            r#"{"content":"hello"}"#,
+            &tape,
+            dir.path(),
+            &ToolContext::empty(),
+        );
         assert!(result.contains("'path' argument is required"));
     }
 
@@ -646,6 +697,7 @@ mod tests {
             r#"{"path":"a.txt","new":"x"}"#,
             &tape,
             dir.path(),
+            &ToolContext::empty(),
         );
         assert!(result.contains("'old' argument is required"));
     }
@@ -654,7 +706,13 @@ mod tests {
     fn execute_skill_tool_not_found() {
         let dir = tempfile::tempdir().unwrap();
         let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
-        let result = execute_tool("skill.nonexistent", "{}", &tape, dir.path());
+        let result = execute_tool(
+            "skill.nonexistent",
+            "{}",
+            &tape,
+            dir.path(),
+            &ToolContext::empty(),
+        );
         assert!(result.contains("Skill not found"));
     }
 
@@ -690,7 +748,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("test.txt"), "hello from tool").unwrap();
         let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
-        let result = execute_tool("file.read", r#"{"path": "test.txt"}"#, &tape, dir.path());
+        let result = execute_tool(
+            "file.read",
+            r#"{"path": "test.txt"}"#,
+            &tape,
+            dir.path(),
+            &ToolContext::empty(),
+        );
         assert!(result.contains("hello from tool"));
     }
 
@@ -703,6 +767,7 @@ mod tests {
             r#"{"path": "out.txt", "content": "written by tool"}"#,
             &tape,
             dir.path(),
+            &ToolContext::empty(),
         );
         assert!(result.contains("Written"));
         assert_eq!(
@@ -717,7 +782,13 @@ mod tests {
         std::fs::write(dir.path().join("a.txt"), "").unwrap();
         std::fs::create_dir(dir.path().join("sub")).unwrap();
         let tape = crate::tape::store::TapeStore::open(dir.path(), "test").unwrap();
-        let result = execute_tool("file.list", r#"{"path": ""}"#, &tape, dir.path());
+        let result = execute_tool(
+            "file.list",
+            r#"{"path": ""}"#,
+            &tape,
+            dir.path(),
+            &ToolContext::empty(),
+        );
         assert!(result.contains("a.txt"));
         assert!(result.contains("sub/"));
     }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tracing::{debug, info};
+use tracing::debug;
 
 /// A scheduled job with its metadata.
 #[derive(Debug, Clone)]
@@ -34,29 +34,25 @@ impl ScheduledJob {
     }
 }
 
-/// Notification callback type.
-type Notifier = Arc<dyn Fn(String) + Send + Sync>;
+/// Notification callback type — each job captures its own notifier.
+pub type Notifier = Arc<dyn Fn(String) + Send + Sync>;
 
 /// In-memory scheduler that manages timed jobs.
 ///
 /// Jobs are executed by spawning tokio tasks. The scheduler is process-wide
 /// and stored as a global singleton so `execute_tool` (which has a fixed
 /// sync signature) can access it without signature changes.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SchedulerService {
     jobs: Arc<Mutex<HashMap<String, ScheduledJob>>>,
     /// Handles for spawned tokio tasks, keyed by job ID.
-    /// Used to cancel tasks when removing jobs.
     handles: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
-    /// Notification callback — called when a job fires.
-    notifier: Arc<Mutex<Option<Notifier>>>,
 }
 
 impl std::fmt::Debug for SchedulerService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SchedulerService")
             .field("jobs", &self.jobs)
-            .field("has_notifier", &self.notifier.lock().unwrap().is_some())
             .finish()
     }
 }
@@ -66,39 +62,20 @@ impl SchedulerService {
         Self {
             jobs: Arc::new(Mutex::new(HashMap::new())),
             handles: Arc::new(Mutex::new(HashMap::new())),
-            notifier: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Register a notification callback for when scheduled jobs fire.
-    pub fn set_notifier<F: Fn(String) + Send + Sync + 'static>(&self, f: F) {
-        let mut notifier = self.notifier.lock().unwrap();
-        *notifier = Some(Arc::new(f));
-        info!("scheduler: notifier registered");
-    }
-
-    /// Fire a notification — calls the registered notifier, falls back to eprintln.
-    fn fire_notification(notifier: &Option<Notifier>, job_id: &str, message: &str) {
-        let text = format!("⏰ [Reminder: {}] {}", job_id, message);
-        if let Some(notify_fn) = notifier {
-            notify_fn(text);
-        } else {
-            eprintln!("[schedule:{}] {}", job_id, message);
-        }
-    }
-
-    /// Add a scheduled job.
+    /// Add a scheduled job with an optional per-job notification callback.
     ///
-    /// - `after_seconds`: fire once after this many seconds
-    /// - `interval_seconds`: fire repeatedly at this interval
-    /// - `message`: the reminder text to deliver
-    ///
-    /// Returns a status string like "scheduled: abc123 fires=once in 60s"
+    /// When the job fires, it calls `notifier(message)` if provided,
+    /// otherwise falls back to `eprintln!`. Each job captures its own
+    /// notifier closure — Bub-style context-bound callbacks.
     pub fn add_job(
         &self,
         message: &str,
         after_seconds: Option<u64>,
         interval_seconds: Option<u64>,
+        notifier: Option<Notifier>,
     ) -> String {
         if after_seconds.is_none() && interval_seconds.is_none() {
             return "Error: must specify either 'after_seconds' or 'interval_seconds'".to_string();
@@ -134,14 +111,11 @@ impl SchedulerService {
         let handle = match tokio::runtime::Handle::try_current() {
             Ok(h) => h,
             Err(_) => {
-                // No runtime — remove the job we just inserted and return error
                 let mut jobs = self.jobs.lock().unwrap();
                 jobs.remove(&id);
                 return "Error: no async runtime available to schedule jobs".to_string();
             }
         };
-
-        let notifier = self.notifier.lock().unwrap().clone();
 
         let task_handle = handle.spawn(async move {
             if let Some(delay) = after {
@@ -153,12 +127,10 @@ impl SchedulerService {
                 };
                 if !cancelled {
                     debug!(job_id = %job_id, "schedule: firing one-shot reminder");
-                    Self::fire_notification(&notifier, &job_id, &msg);
-                    // Clean up after firing
+                    fire(&notifier, &job_id, &msg);
                     let mut jobs = jobs_ref.lock().unwrap();
                     jobs.remove(&job_id);
                 }
-                // Clean up handle
                 let mut handles = handles_ref.lock().unwrap();
                 handles.remove(&job_id);
             } else if let Some(interval_dur) = interval {
@@ -175,9 +147,8 @@ impl SchedulerService {
                         break;
                     }
                     debug!(job_id = %job_id, "schedule: firing interval reminder");
-                    Self::fire_notification(&notifier, &job_id, &msg);
+                    fire(&notifier, &job_id, &msg);
                 }
-                // Clean up handle
                 let mut handles = handles_ref.lock().unwrap();
                 handles.remove(&job_id);
             }
@@ -214,7 +185,6 @@ impl SchedulerService {
 
     /// Remove a job by ID.
     pub fn remove_job(&self, job_id: &str) -> String {
-        // Mark as cancelled
         {
             let mut jobs = self.jobs.lock().unwrap();
             match jobs.get_mut(job_id) {
@@ -226,7 +196,6 @@ impl SchedulerService {
             }
         }
 
-        // Abort the tokio task
         {
             let mut handles = self.handles.lock().unwrap();
             if let Some(handle) = handles.remove(job_id) {
@@ -244,9 +213,13 @@ impl SchedulerService {
     }
 }
 
-impl Default for SchedulerService {
-    fn default() -> Self {
-        Self::new()
+/// Fire a notification — calls the per-job notifier, falls back to eprintln.
+fn fire(notifier: &Option<Notifier>, job_id: &str, message: &str) {
+    let text = format!("\u{23f0} [Reminder: {job_id}] {message}");
+    if let Some(notify_fn) = notifier {
+        notify_fn(text);
+    } else {
+        eprintln!("[schedule:{job_id}] {message}");
     }
 }
 
@@ -263,9 +236,6 @@ fn generate_job_id() -> String {
 }
 
 /// Global scheduler singleton.
-///
-/// This allows `execute_tool` (which has a fixed sync signature) to access
-/// the scheduler without changing its function signature.
 static GLOBAL_SCHEDULER: std::sync::OnceLock<SchedulerService> = std::sync::OnceLock::new();
 
 /// Get or initialize the global scheduler.
@@ -284,7 +254,7 @@ mod tests {
     #[tokio::test]
     async fn add_after_seconds_returns_scheduled() {
         let svc = fresh_service();
-        let result = svc.add_job("test reminder", Some(60), None);
+        let result = svc.add_job("test reminder", Some(60), None, None);
         assert!(result.starts_with("scheduled:"), "got: {result}");
         assert!(result.contains("once in"), "got: {result}");
     }
@@ -292,7 +262,7 @@ mod tests {
     #[tokio::test]
     async fn add_interval_returns_scheduled() {
         let svc = fresh_service();
-        let result = svc.add_job("repeating", None, Some(300));
+        let result = svc.add_job("repeating", None, Some(300), None);
         assert!(result.starts_with("scheduled:"), "got: {result}");
         assert!(result.contains("every 300s"), "got: {result}");
     }
@@ -300,7 +270,7 @@ mod tests {
     #[test]
     fn add_requires_timing_parameter() {
         let svc = fresh_service();
-        let result = svc.add_job("no timing", None, None);
+        let result = svc.add_job("no timing", None, None, None);
         assert!(result.starts_with("Error:"), "got: {result}");
     }
 
@@ -314,8 +284,8 @@ mod tests {
     #[tokio::test]
     async fn list_with_jobs() {
         let svc = fresh_service();
-        svc.add_job("reminder 1", Some(60), None);
-        svc.add_job("reminder 2", None, Some(120));
+        svc.add_job("reminder 1", Some(60), None, None);
+        svc.add_job("reminder 2", None, Some(120), None);
         let result = svc.list_jobs();
         assert!(result.contains("reminder 1"), "got: {result}");
         assert!(result.contains("reminder 2"), "got: {result}");
@@ -324,8 +294,7 @@ mod tests {
     #[tokio::test]
     async fn remove_existing_job() {
         let svc = fresh_service();
-        let add_result = svc.add_job("to remove", Some(60), None);
-        // Extract job ID from "scheduled: abc123 fires=..."
+        let add_result = svc.add_job("to remove", Some(60), None, None);
         let job_id = add_result
             .strip_prefix("scheduled: ")
             .unwrap()
@@ -349,9 +318,29 @@ mod tests {
     async fn active_count_tracks_correctly() {
         let svc = fresh_service();
         assert_eq!(svc.active_count(), 0);
-        svc.add_job("one", Some(60), None);
+        svc.add_job("one", Some(60), None, None);
         assert_eq!(svc.active_count(), 1);
-        svc.add_job("two", Some(120), None);
+        svc.add_job("two", Some(120), None, None);
         assert_eq!(svc.active_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn per_job_notifier_is_called() {
+        let svc = fresh_service();
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let recv_clone = received.clone();
+        let notifier: Notifier = Arc::new(move |msg| {
+            recv_clone.lock().unwrap().push(msg);
+        });
+
+        // One-shot job with 0-second delay
+        svc.add_job("drink water", Some(0), None, Some(notifier));
+
+        // Wait for it to fire
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let msgs = received.lock().unwrap();
+        assert_eq!(msgs.len(), 1, "expected 1 notification, got: {msgs:?}");
+        assert!(msgs[0].contains("drink water"), "got: {}", msgs[0]);
     }
 }

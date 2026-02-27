@@ -120,6 +120,16 @@ pub fn builtin_registry() -> ToolRegistry {
         "Edit a file by searching for old text and replacing with new text. Supports replace_all.",
         "builtin",
     );
+    registry.register(
+        "web.fetch",
+        "Fetch a URL and return the content as markdown. HTML is converted automatically.",
+        "builtin",
+    );
+    registry.register(
+        "web.search",
+        "Search the web for a query. Returns a search URL to fetch.",
+        "builtin",
+    );
     registry
 }
 
@@ -238,6 +248,26 @@ pub fn tool_parameters(name: &str) -> serde_json::Value {
                 }
             },
             "required": ["path", "old", "new"]
+        }),
+        "web.fetch" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to fetch"
+                }
+            },
+            "required": ["url"]
+        }),
+        "web.search" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query"
+                }
+            },
+            "required": ["query"]
         }),
         _ => serde_json::json!({
             "type": "object",
@@ -374,6 +404,22 @@ pub fn execute_tool(
                 Err(_) => false,
             };
             file_ops::edit_file(workspace, &path, &old, &new, replace_all)
+        }
+        "web.fetch" => {
+            use crate::tools::web;
+            let url = parse_json_arg(args, "url").unwrap_or_default();
+            if url.is_empty() {
+                return "Error: 'url' argument is required.".to_string();
+            }
+            web::fetch_url(&url)
+        }
+        "web.search" => {
+            use crate::tools::web;
+            let query = parse_json_arg(args, "query").unwrap_or_default();
+            if query.is_empty() {
+                return "Error: 'query' argument is required.".to_string();
+            }
+            web::web_search(&query)
         }
         _ if name.starts_with("skill.") => {
             // Skill tool: load the skill body and return as context.

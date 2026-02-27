@@ -141,6 +141,30 @@ async fn handle_message(
         }
     }
 
+    // Register scheduler notifier for this chat (so reminders get delivered here)
+    {
+        use crate::tools::schedule::global_scheduler;
+        let tg_token = config.telegram_token.clone().unwrap_or_default();
+        let tg_chat_id = chat_id.0;
+        global_scheduler().set_notifier(move |text| {
+            let token = tg_token.clone();
+            let chat = tg_chat_id;
+            let msg_text = text.clone();
+            // Fire-and-forget: spawn a thread to send notification via Telegram API
+            std::thread::spawn(move || {
+                let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+                let client = reqwest::blocking::Client::new();
+                let _ = client
+                    .post(&url)
+                    .json(&serde_json::json!({
+                        "chat_id": chat,
+                        "text": msg_text,
+                    }))
+                    .send();
+            });
+        });
+    }
+
     let session_id = format!("telegram:{}", chat_id.0);
     info!(
         session_id = %session_id,

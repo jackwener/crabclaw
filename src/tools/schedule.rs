@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tracing::debug;
+use tracing::{debug, info};
 
 /// A scheduled job with its metadata.
 #[derive(Debug, Clone)]
@@ -34,17 +34,31 @@ impl ScheduledJob {
     }
 }
 
+/// Notification callback type.
+type Notifier = Arc<dyn Fn(String) + Send + Sync>;
+
 /// In-memory scheduler that manages timed jobs.
 ///
 /// Jobs are executed by spawning tokio tasks. The scheduler is process-wide
 /// and stored as a global singleton so `execute_tool` (which has a fixed
 /// sync signature) can access it without signature changes.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SchedulerService {
     jobs: Arc<Mutex<HashMap<String, ScheduledJob>>>,
     /// Handles for spawned tokio tasks, keyed by job ID.
     /// Used to cancel tasks when removing jobs.
     handles: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    /// Notification callback — called when a job fires.
+    notifier: Arc<Mutex<Option<Notifier>>>,
+}
+
+impl std::fmt::Debug for SchedulerService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SchedulerService")
+            .field("jobs", &self.jobs)
+            .field("has_notifier", &self.notifier.lock().unwrap().is_some())
+            .finish()
+    }
 }
 
 impl SchedulerService {
@@ -52,6 +66,24 @@ impl SchedulerService {
         Self {
             jobs: Arc::new(Mutex::new(HashMap::new())),
             handles: Arc::new(Mutex::new(HashMap::new())),
+            notifier: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Register a notification callback for when scheduled jobs fire.
+    pub fn set_notifier<F: Fn(String) + Send + Sync + 'static>(&self, f: F) {
+        let mut notifier = self.notifier.lock().unwrap();
+        *notifier = Some(Arc::new(f));
+        info!("scheduler: notifier registered");
+    }
+
+    /// Fire a notification — calls the registered notifier, falls back to eprintln.
+    fn fire_notification(notifier: &Option<Notifier>, job_id: &str, message: &str) {
+        let text = format!("⏰ [Reminder: {}] {}", job_id, message);
+        if let Some(notify_fn) = notifier {
+            notify_fn(text);
+        } else {
+            eprintln!("[schedule:{}] {}", job_id, message);
         }
     }
 
@@ -109,6 +141,8 @@ impl SchedulerService {
             }
         };
 
+        let notifier = self.notifier.lock().unwrap().clone();
+
         let task_handle = handle.spawn(async move {
             if let Some(delay) = after {
                 // One-shot timer
@@ -119,7 +153,7 @@ impl SchedulerService {
                 };
                 if !cancelled {
                     debug!(job_id = %job_id, "schedule: firing one-shot reminder");
-                    eprintln!("[schedule:{}] {}", job_id, msg);
+                    Self::fire_notification(&notifier, &job_id, &msg);
                     // Clean up after firing
                     let mut jobs = jobs_ref.lock().unwrap();
                     jobs.remove(&job_id);
@@ -141,7 +175,7 @@ impl SchedulerService {
                         break;
                     }
                     debug!(job_id = %job_id, "schedule: firing interval reminder");
-                    eprintln!("[schedule:{}] {}", job_id, msg);
+                    Self::fire_notification(&notifier, &job_id, &msg);
                 }
                 // Clean up handle
                 let mut handles = handles_ref.lock().unwrap();

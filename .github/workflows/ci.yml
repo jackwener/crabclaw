@@ -62,6 +62,7 @@ jobs:
           cargo test --test telegram_routing_integration
           cargo test --test telegram_provider_integration
           cargo test --test telegram_tools_integration
+          cargo test --test telegram_markdown_integration
 
       - name: Run OpenAI-compatible provider integration tests
         run: cargo test --test openai_provider_integration

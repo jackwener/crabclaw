@@ -291,7 +291,7 @@ fn split_message(text: &str, max_len: usize) -> Vec<String> {
 }
 
 /// Escape HTML special characters for Telegram HTML parse mode.
-fn escape_html(s: &str) -> String {
+pub fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -310,7 +310,7 @@ fn escape_html(s: &str) -> String {
 /// - `[text](url)` → `<a href="url">text</a>`
 /// - `~~text~~` → `<s>text</s>`
 #[allow(clippy::collapsible_if)]
-fn markdown_to_telegram_html(text: &str) -> String {
+pub fn markdown_to_telegram_html(text: &str) -> String {
     let lines: Vec<&str> = text.split('\n').collect();
     let mut result_lines: Vec<String> = Vec::new();
 

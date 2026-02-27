@@ -67,6 +67,9 @@ jobs:
       - name: Run Web tools integration tests
         run: cargo test --test web_tools_integration
 
+      - name: Run Schedule tools integration tests
+        run: cargo test --test schedule_tools_integration
+
       - name: Run OpenAI-compatible provider integration tests
         run: cargo test --test openai_provider_integration
 

@@ -130,6 +130,21 @@ pub fn builtin_registry() -> ToolRegistry {
         "Search the web for a query. Returns a search URL to fetch.",
         "builtin",
     );
+    registry.register(
+        "schedule.add",
+        "Schedule a reminder. Specify after_seconds (one-shot) or interval_seconds (repeating).",
+        "builtin",
+    );
+    registry.register(
+        "schedule.list",
+        "List all active scheduled jobs.",
+        "builtin",
+    );
+    registry.register(
+        "schedule.remove",
+        "Remove a scheduled job by its ID.",
+        "builtin",
+    );
     registry
 }
 
@@ -268,6 +283,39 @@ pub fn tool_parameters(name: &str) -> serde_json::Value {
                 }
             },
             "required": ["query"]
+        }),
+        "schedule.add" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "The reminder message to deliver when the schedule fires"
+                },
+                "after_seconds": {
+                    "type": "integer",
+                    "description": "Fire once after this many seconds (one-shot timer)"
+                },
+                "interval_seconds": {
+                    "type": "integer",
+                    "description": "Fire repeatedly at this interval in seconds"
+                }
+            },
+            "required": ["message"]
+        }),
+        "schedule.list" => serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        }),
+        "schedule.remove" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "The ID of the job to remove"
+                }
+            },
+            "required": ["job_id"]
         }),
         _ => serde_json::json!({
             "type": "object",
@@ -420,6 +468,34 @@ pub fn execute_tool(
                 return "Error: 'query' argument is required.".to_string();
             }
             web::web_search(&query)
+        }
+        "schedule.add" => {
+            use crate::tools::schedule::global_scheduler;
+            let message = parse_json_arg(args, "message").unwrap_or_default();
+            if message.is_empty() {
+                return "Error: 'message' argument is required.".to_string();
+            }
+            let after_seconds = match serde_json::from_str::<serde_json::Value>(args) {
+                Ok(v) => v["after_seconds"].as_u64(),
+                Err(_) => None,
+            };
+            let interval_seconds = match serde_json::from_str::<serde_json::Value>(args) {
+                Ok(v) => v["interval_seconds"].as_u64(),
+                Err(_) => None,
+            };
+            global_scheduler().add_job(&message, after_seconds, interval_seconds)
+        }
+        "schedule.list" => {
+            use crate::tools::schedule::global_scheduler;
+            global_scheduler().list_jobs()
+        }
+        "schedule.remove" => {
+            use crate::tools::schedule::global_scheduler;
+            let job_id = parse_json_arg(args, "job_id").unwrap_or_default();
+            if job_id.is_empty() {
+                return "Error: 'job_id' argument is required.".to_string();
+            }
+            global_scheduler().remove_job(&job_id)
         }
         _ if name.starts_with("skill.") => {
             // Skill tool: load the skill body and return as context.

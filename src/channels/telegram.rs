@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use teloxide::prelude::*;
-use teloxide::types::{ChatAction, MediaKind, MessageKind};
+use teloxide::types::{ChatAction, MediaKind, MessageKind, ParseMode};
 use tracing::{debug, info, warn};
 
 use crate::channels::base::{Channel, ChannelResponse};
@@ -166,10 +166,21 @@ async fn handle_message(
     typing_handle.abort();
 
     if let Some(reply) = response.to_reply() {
-        // Telegram has a 4096 char limit per message
+        // Telegram has a 4096 char limit per message.
+        // Convert each chunk to HTML independently so tags aren't split across messages.
         for chunk in split_message(&reply, 4096) {
-            if let Err(e) = bot.send_message(chat_id, &chunk).await {
-                warn!("telegram.send.error: {e}");
+            let html = markdown_to_telegram_html(&chunk);
+            let send_result = bot
+                .send_message(chat_id, &html)
+                .parse_mode(ParseMode::Html)
+                .await;
+
+            if let Err(e) = send_result {
+                // Fallback: send as plain text if HTML parsing fails
+                warn!("telegram.send.html_error: {e} — retrying without parse_mode");
+                if let Err(e2) = bot.send_message(chat_id, &chunk).await {
+                    warn!("telegram.send.plain_error: {e2}");
+                }
             }
         }
     }
@@ -279,6 +290,173 @@ fn split_message(text: &str, max_len: usize) -> Vec<String> {
     chunks
 }
 
+/// Escape HTML special characters for Telegram HTML parse mode.
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+/// Convert standard Markdown (from LLM output) to Telegram HTML format.
+///
+/// Supported conversions:
+/// - `## Title` → `<b>Title</b>`
+/// - `**bold**` → `<b>bold</b>`
+/// - `*italic*` → `<i>italic</i>`
+/// - `` `code` `` → `<code>code</code>`
+/// - ```` ```lang ... ``` ```` → `<pre><code>...</code></pre>`
+/// - `[text](url)` → `<a href="url">text</a>`
+/// - `~~text~~` → `<s>text</s>`
+fn markdown_to_telegram_html(text: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut result_lines: Vec<String> = Vec::new();
+
+    for line in &lines {
+        let trimmed_line = line.trim_start();
+
+        // Preserve fence lines for the second-pass code block parser
+        if trimmed_line.starts_with("```") {
+            result_lines.push(trimmed_line.to_string());
+            continue;
+        }
+
+        // Handle headers: ## Title → <b>Title</b>
+        let stripped = line.trim_start_matches('#');
+        let header_level = line.len() - stripped.len();
+        if header_level > 0 && line.starts_with('#') && stripped.starts_with(' ') {
+            let title = escape_html(stripped.trim());
+            result_lines.push(format!("<b>{title}</b>"));
+            continue;
+        }
+
+        // Inline formatting
+        let mut line_out = String::new();
+        let mut i = 0;
+        let bytes = line.as_bytes();
+        let len = bytes.len();
+
+        while i < len {
+            // Bold: **text**
+            if i + 1 < len && bytes[i] == b'*' && bytes[i + 1] == b'*' {
+                if let Some(end) = line[i + 2..].find("**") {
+                    let inner = escape_html(&line[i + 2..i + 2 + end]);
+                    line_out.push_str(&format!("<b>{inner}</b>"));
+                    i += 4 + end;
+                    continue;
+                }
+            }
+            // Bold: __text__
+            if i + 1 < len && bytes[i] == b'_' && bytes[i + 1] == b'_' {
+                if let Some(end) = line[i + 2..].find("__") {
+                    let inner = escape_html(&line[i + 2..i + 2 + end]);
+                    line_out.push_str(&format!("<b>{inner}</b>"));
+                    i += 4 + end;
+                    continue;
+                }
+            }
+            // Italic: *text* (single, not preceded by *)
+            if bytes[i] == b'*' && (i == 0 || bytes[i - 1] != b'*') {
+                if let Some(end) = line[i + 1..].find('*') {
+                    if end > 0 {
+                        let inner = escape_html(&line[i + 1..i + 1 + end]);
+                        line_out.push_str(&format!("<i>{inner}</i>"));
+                        i += 2 + end;
+                        continue;
+                    }
+                }
+            }
+            // Inline code: `code`
+            if bytes[i] == b'`' && (i == 0 || bytes[i - 1] != b'`') {
+                if let Some(end) = line[i + 1..].find('`') {
+                    let inner = escape_html(&line[i + 1..i + 1 + end]);
+                    line_out.push_str(&format!("<code>{inner}</code>"));
+                    i += 2 + end;
+                    continue;
+                }
+            }
+            // Link: [text](url)
+            if bytes[i] == b'[' {
+                if let Some(bracket_end) = line[i + 1..].find(']') {
+                    let text_part = &line[i + 1..i + 1 + bracket_end];
+                    let after_bracket = i + 1 + bracket_end + 1;
+                    if after_bracket < len && bytes[after_bracket] == b'(' {
+                        if let Some(paren_end) = line[after_bracket + 1..].find(')') {
+                            let url = &line[after_bracket + 1..after_bracket + 1 + paren_end];
+                            if url.starts_with("http://") || url.starts_with("https://") {
+                                let text_html = escape_html(text_part);
+                                let url_html = escape_html(url);
+                                line_out
+                                    .push_str(&format!("<a href=\"{url_html}\">{text_html}</a>"));
+                                i = after_bracket + 1 + paren_end + 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            // Strikethrough: ~~text~~
+            if i + 1 < len && bytes[i] == b'~' && bytes[i + 1] == b'~' {
+                if let Some(end) = line[i + 2..].find("~~") {
+                    let inner = escape_html(&line[i + 2..i + 2 + end]);
+                    line_out.push_str(&format!("<s>{inner}</s>"));
+                    i += 4 + end;
+                    continue;
+                }
+            }
+            // Default: escape HTML entities
+            let ch = line[i..].chars().next().unwrap();
+            match ch {
+                '<' => line_out.push_str("&lt;"),
+                '>' => line_out.push_str("&gt;"),
+                '&' => line_out.push_str("&amp;"),
+                '"' => line_out.push_str("&quot;"),
+                '\'' => line_out.push_str("&#39;"),
+                _ => line_out.push(ch),
+            }
+            i += ch.len_utf8();
+        }
+        result_lines.push(line_out);
+    }
+
+    // Second pass: merge ``` fenced code blocks into <pre><code> blocks
+    let joined = result_lines.join("\n");
+    let mut final_out = String::with_capacity(joined.len());
+    let mut in_code_block = false;
+    let mut code_buf = String::new();
+
+    for line in joined.split('\n') {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            if !in_code_block {
+                in_code_block = true;
+                code_buf.clear();
+            } else {
+                in_code_block = false;
+                let escaped = code_buf.trim_end_matches('\n');
+                final_out.push_str(&format!("<pre><code>{escaped}</code></pre>\n"));
+                code_buf.clear();
+            }
+        } else if in_code_block {
+            code_buf.push_str(line);
+            code_buf.push('\n');
+        } else {
+            final_out.push_str(line);
+            final_out.push('\n');
+        }
+    }
+    // Handle unclosed code block
+    if in_code_block && !code_buf.is_empty() {
+        final_out.push_str(&format!(
+            "<pre><code>{}</code></pre>\n",
+            code_buf.trim_end()
+        ));
+    }
+
+    final_out.trim_end_matches('\n').to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,5 +551,92 @@ mod tests {
             Some("alice"),
             "200"
         ));
+    }
+
+    // --- markdown_to_telegram_html tests ---
+
+    #[test]
+    fn html_escape_special_chars() {
+        assert_eq!(escape_html("<b>&\"'"), "&lt;b&gt;&amp;&quot;&#39;");
+    }
+
+    #[test]
+    fn html_plain_text_passthrough() {
+        assert_eq!(markdown_to_telegram_html("Hello, world!"), "Hello, world!");
+    }
+
+    #[test]
+    fn html_header_to_bold() {
+        assert_eq!(markdown_to_telegram_html("## Title"), "<b>Title</b>");
+        assert_eq!(markdown_to_telegram_html("### Sub"), "<b>Sub</b>");
+    }
+
+    #[test]
+    fn html_bold() {
+        assert_eq!(
+            markdown_to_telegram_html("This is **bold** text"),
+            "This is <b>bold</b> text"
+        );
+    }
+
+    #[test]
+    fn html_italic() {
+        assert_eq!(
+            markdown_to_telegram_html("This is *italic* text"),
+            "This is <i>italic</i> text"
+        );
+    }
+
+    #[test]
+    fn html_inline_code() {
+        assert_eq!(
+            markdown_to_telegram_html("Use `cargo test` to run"),
+            "Use <code>cargo test</code> to run"
+        );
+    }
+
+    #[test]
+    fn html_code_block() {
+        let input = "Before\n```rust\nfn main() {}\n```\nAfter";
+        let output = markdown_to_telegram_html(input);
+        assert!(output.contains("<pre><code>"));
+        assert!(output.contains("fn main() {}"));
+        assert!(output.contains("</code></pre>"));
+        assert!(output.contains("Before"));
+        assert!(output.contains("After"));
+    }
+
+    #[test]
+    fn html_link() {
+        assert_eq!(
+            markdown_to_telegram_html("Visit [Rust](https://rust-lang.org) now"),
+            "Visit <a href=\"https://rust-lang.org\">Rust</a> now"
+        );
+    }
+
+    #[test]
+    fn html_strikethrough() {
+        assert_eq!(
+            markdown_to_telegram_html("This is ~~deleted~~ text"),
+            "This is <s>deleted</s> text"
+        );
+    }
+
+    #[test]
+    fn html_mixed_formatting() {
+        let input = "## Summary\n\nThis is **bold** and *italic* with `code`.";
+        let output = markdown_to_telegram_html(input);
+        assert!(output.contains("<b>Summary</b>"));
+        assert!(output.contains("<b>bold</b>"));
+        assert!(output.contains("<i>italic</i>"));
+        assert!(output.contains("<code>code</code>"));
+    }
+
+    #[test]
+    fn html_escapes_in_plain_text() {
+        assert_eq!(
+            markdown_to_telegram_html("a < b && c > d"),
+            "a &lt; b &amp;&amp; c &gt; d"
+        );
     }
 }

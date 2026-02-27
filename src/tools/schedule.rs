@@ -99,50 +99,58 @@ impl SchedulerService {
         let job_id = id.clone();
         let msg = message.to_string();
 
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            let task_handle = handle.spawn(async move {
-                if let Some(delay) = after {
-                    // One-shot timer
-                    tokio::time::sleep(delay).await;
+        let handle = match tokio::runtime::Handle::try_current() {
+            Ok(h) => h,
+            Err(_) => {
+                // No runtime — remove the job we just inserted and return error
+                let mut jobs = self.jobs.lock().unwrap();
+                jobs.remove(&id);
+                return "Error: no async runtime available to schedule jobs".to_string();
+            }
+        };
+
+        let task_handle = handle.spawn(async move {
+            if let Some(delay) = after {
+                // One-shot timer
+                tokio::time::sleep(delay).await;
+                let cancelled = {
+                    let jobs = jobs_ref.lock().unwrap();
+                    jobs.get(&job_id).map(|j| j.cancelled).unwrap_or(true)
+                };
+                if !cancelled {
+                    debug!(job_id = %job_id, "schedule: firing one-shot reminder");
+                    eprintln!("[schedule:{}] {}", job_id, msg);
+                    // Clean up after firing
+                    let mut jobs = jobs_ref.lock().unwrap();
+                    jobs.remove(&job_id);
+                }
+                // Clean up handle
+                let mut handles = handles_ref.lock().unwrap();
+                handles.remove(&job_id);
+            } else if let Some(interval_dur) = interval {
+                // Repeating timer
+                let mut ticker = tokio::time::interval(interval_dur);
+                ticker.tick().await; // first tick fires immediately, skip it
+                loop {
+                    ticker.tick().await;
                     let cancelled = {
                         let jobs = jobs_ref.lock().unwrap();
                         jobs.get(&job_id).map(|j| j.cancelled).unwrap_or(true)
                     };
-                    if !cancelled {
-                        debug!(job_id = %job_id, "schedule: firing one-shot reminder");
-                        eprintln!("[schedule:{}] {}", job_id, msg);
-                        // Clean up after firing
-                        let mut jobs = jobs_ref.lock().unwrap();
-                        jobs.remove(&job_id);
+                    if cancelled {
+                        break;
                     }
-                    // Clean up handle
-                    let mut handles = handles_ref.lock().unwrap();
-                    handles.remove(&job_id);
-                } else if let Some(interval_dur) = interval {
-                    // Repeating timer
-                    let mut ticker = tokio::time::interval(interval_dur);
-                    ticker.tick().await; // first tick fires immediately, skip it
-                    loop {
-                        ticker.tick().await;
-                        let cancelled = {
-                            let jobs = jobs_ref.lock().unwrap();
-                            jobs.get(&job_id).map(|j| j.cancelled).unwrap_or(true)
-                        };
-                        if cancelled {
-                            break;
-                        }
-                        debug!(job_id = %job_id, "schedule: firing interval reminder");
-                        eprintln!("[schedule:{}] {}", job_id, msg);
-                    }
-                    // Clean up handle
-                    let mut handles = handles_ref.lock().unwrap();
-                    handles.remove(&job_id);
+                    debug!(job_id = %job_id, "schedule: firing interval reminder");
+                    eprintln!("[schedule:{}] {}", job_id, msg);
                 }
-            });
+                // Clean up handle
+                let mut handles = handles_ref.lock().unwrap();
+                handles.remove(&job_id);
+            }
+        });
 
-            let mut handles = self.handles.lock().unwrap();
-            handles.insert(id.clone(), task_handle);
-        }
+        let mut handles = self.handles.lock().unwrap();
+        handles.insert(id.clone(), task_handle);
 
         format!("scheduled: {id} fires={description}")
     }
@@ -239,16 +247,16 @@ mod tests {
         SchedulerService::new()
     }
 
-    #[test]
-    fn add_after_seconds_returns_scheduled() {
+    #[tokio::test]
+    async fn add_after_seconds_returns_scheduled() {
         let svc = fresh_service();
         let result = svc.add_job("test reminder", Some(60), None);
         assert!(result.starts_with("scheduled:"), "got: {result}");
         assert!(result.contains("once in"), "got: {result}");
     }
 
-    #[test]
-    fn add_interval_returns_scheduled() {
+    #[tokio::test]
+    async fn add_interval_returns_scheduled() {
         let svc = fresh_service();
         let result = svc.add_job("repeating", None, Some(300));
         assert!(result.starts_with("scheduled:"), "got: {result}");
@@ -269,8 +277,8 @@ mod tests {
         assert_eq!(result, "(no scheduled jobs)");
     }
 
-    #[test]
-    fn list_with_jobs() {
+    #[tokio::test]
+    async fn list_with_jobs() {
         let svc = fresh_service();
         svc.add_job("reminder 1", Some(60), None);
         svc.add_job("reminder 2", None, Some(120));
@@ -279,8 +287,8 @@ mod tests {
         assert!(result.contains("reminder 2"), "got: {result}");
     }
 
-    #[test]
-    fn remove_existing_job() {
+    #[tokio::test]
+    async fn remove_existing_job() {
         let svc = fresh_service();
         let add_result = svc.add_job("to remove", Some(60), None);
         // Extract job ID from "scheduled: abc123 fires=..."
@@ -303,8 +311,8 @@ mod tests {
         assert!(result.starts_with("Error:"), "got: {result}");
     }
 
-    #[test]
-    fn active_count_tracks_correctly() {
+    #[tokio::test]
+    async fn active_count_tracks_correctly() {
         let svc = fresh_service();
         assert_eq!(svc.active_count(), 0);
         svc.add_job("one", Some(60), None);

@@ -201,6 +201,12 @@ pub fn route_assistant(text: &str, tape: &mut TapeStore, workspace: &Path) -> As
             continue;
         }
 
+        // Skip command detection inside code fences to prevent prompt injection
+        if in_fence {
+            visible_lines.push(line.to_string());
+            continue;
+        }
+
         // Detect comma-prefixed commands
         let command = detect_command(stripped);
 
@@ -923,14 +929,17 @@ mod tests {
     fn assistant_command_in_fence() {
         let (_dir, mut tape) = make_tape();
         let ws = workspace();
+        // Commands inside code fences must NOT be executed (prompt injection prevention)
         let result = route_assistant(
             "Run this:\n```\n,echo inside_fence\n```",
             &mut tape,
             ws.path(),
         );
-        assert!(result.has_commands());
-        assert_eq!(result.command_blocks.len(), 1);
-        assert!(result.command_blocks[0].contains("inside_fence"));
+        assert!(
+            !result.has_commands(),
+            "commands inside fences should be skipped"
+        );
+        assert!(result.visible_text.contains(",echo inside_fence"));
     }
 
     #[test]

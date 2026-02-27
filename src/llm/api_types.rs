@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Message {
     pub role: String,
+    #[serde(default)]
     pub content: String,
     /// Tool calls requested by the assistant (only present when role=assistant).
     #[serde(skip_serializing_if = "Option::is_none", default)]

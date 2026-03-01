@@ -158,7 +158,12 @@ async fn tool_loop_breaks_after_max_iterations_without_hanging() {
         AgentLoop::open(&config, workspace.path(), "test_max_iter", None, None).unwrap();
 
     let result = agent.handle_input("loop forever?").await;
-    assert!(result.error.is_none());
+    assert!(
+        result
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("tool iteration limit reached"))
+    );
     assert_eq!(result.tool_rounds, 5);
     assert!(result.assistant_output.is_none() || result.assistant_output.as_deref() == Some(""));
 }

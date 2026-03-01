@@ -36,6 +36,54 @@ const DEFAULT_TIMEOUT_SECS: u64 = 60;
 const MAX_RETRIES: usize = 3;
 const INITIAL_RETRY_DELAY_MS: u64 = 1000;
 
+fn merged_system_prompt(messages: &[crate::llm::api_types::Message]) -> Option<String> {
+    let mut combined = String::new();
+    for msg in messages {
+        if msg.role != "system" {
+            continue;
+        }
+        let text = msg.content.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if !combined.is_empty() {
+            combined.push('\n');
+        }
+        combined.push_str(text);
+    }
+    if combined.is_empty() {
+        None
+    } else {
+        Some(combined)
+    }
+}
+
+fn codex_response_to_stream_chunks(resp: &ChatResponse) -> Vec<StreamChunk> {
+    let mut out = Vec::new();
+    if let Some(choice) = resp.choices.first() {
+        if !choice.message.content.is_empty() {
+            out.push(StreamChunk::Content(choice.message.content.clone()));
+        }
+        if let Some(tool_calls) = &choice.message.tool_calls {
+            for (index, tc) in tool_calls.iter().enumerate() {
+                out.push(StreamChunk::ToolCallStart {
+                    index,
+                    id: tc.id.clone(),
+                    name: tc.function.name.clone(),
+                });
+                if !tc.function.arguments.is_empty() {
+                    out.push(StreamChunk::ToolCallArgument {
+                        index,
+                        text: tc.function.arguments.clone(),
+                    });
+                }
+            }
+        }
+    }
+    out.push(StreamChunk::Done);
+    out
+}
+
 /// Send a chat completion request, automatically choosing the provider SDK
 /// based on the model prefix (`provider:model`).
 ///
@@ -46,7 +94,9 @@ pub async fn send_chat_request(config: &AppConfig, request: &ChatRequest) -> Res
 
     for attempt in 0..=MAX_RETRIES {
         let result = if let Some(codex_model) = request.model.strip_prefix("codex:") {
-            crate::llm::codex::send_codex_request(codex_model, request, None).await
+            let system_prompt = merged_system_prompt(&request.messages);
+            crate::llm::codex::send_codex_request(codex_model, request, system_prompt.as_deref())
+                .await
         } else if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {
             send_anthropic_request(config, request, anthropic_model).await
         } else if request.model.strip_prefix("openai:").is_some() {
@@ -91,17 +141,19 @@ pub async fn send_chat_request_stream(
     for attempt in 0..=MAX_RETRIES {
         // Codex models use the Responses API; wrap in a non-streaming adapter
         if let Some(codex_model) = request.model.strip_prefix("codex:") {
-            let result = crate::llm::codex::send_codex_request(codex_model, request, None).await;
+            let system_prompt = merged_system_prompt(&request.messages);
+            let result = crate::llm::codex::send_codex_request(
+                codex_model,
+                request,
+                system_prompt.as_deref(),
+            )
+            .await;
             let (tx, rx) = mpsc::unbounded_channel();
             match result {
                 Ok(resp) => {
-                    let text = resp
-                        .choices
-                        .first()
-                        .map(|c| c.message.content.clone())
-                        .unwrap_or_default();
-                    let _ = tx.send(Ok(StreamChunk::Content(text)));
-                    let _ = tx.send(Ok(StreamChunk::Done));
+                    for chunk in codex_response_to_stream_chunks(&resp) {
+                        let _ = tx.send(Ok(chunk));
+                    }
                 }
                 Err(e) => {
                     let _ = tx.send(Err(e));
@@ -656,7 +708,9 @@ fn handle_error_response(status: reqwest::StatusCode, body_text: &str) -> Result
 mod tests {
     use super::*;
     use crate::core::config::AppConfig;
-    use crate::llm::api_types::{ChatRequest, Message, StreamChunk};
+    use crate::llm::api_types::{
+        ChatRequest, Choice, Message, StreamChunk, ToolCall, ToolCallFunction,
+    };
     use tokio::sync::mpsc;
 
     fn test_config(api_base: &str) -> AppConfig {
@@ -1052,5 +1106,66 @@ mod tests {
             vec![StreamChunk::Content("ok".to_string()), StreamChunk::Done]
         );
         mock.assert_async().await;
+    }
+
+    #[test]
+    fn merged_system_prompt_ignores_empty_and_non_system_messages() {
+        let messages = vec![
+            Message::system(""),
+            Message::user("hello"),
+            Message::system("  keep this  "),
+            Message::assistant("world"),
+            Message::system("next"),
+        ];
+        let prompt = merged_system_prompt(&messages);
+        assert_eq!(prompt.as_deref(), Some("keep this\nnext"));
+    }
+
+    #[test]
+    fn merged_system_prompt_none_when_absent() {
+        let messages = vec![Message::user("hello"), Message::assistant("hi")];
+        assert!(merged_system_prompt(&messages).is_none());
+    }
+
+    #[test]
+    fn codex_adapter_emits_tool_calls_in_stream_shape() {
+        let response = ChatResponse {
+            id: Some("resp_1".to_string()),
+            choices: vec![Choice {
+                index: 0,
+                message: Message {
+                    role: "assistant".to_string(),
+                    content: String::new(),
+                    tool_calls: Some(vec![ToolCall {
+                        id: "call_1".to_string(),
+                        call_type: "function".to_string(),
+                        function: ToolCallFunction {
+                            name: "file.write".to_string(),
+                            arguments: r#"{"path":"a.txt"}"#.to_string(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                },
+                finish_reason: Some("tool_calls".to_string()),
+            }],
+            usage: None,
+        };
+
+        let chunks = codex_response_to_stream_chunks(&response);
+        assert_eq!(
+            chunks,
+            vec![
+                StreamChunk::ToolCallStart {
+                    index: 0,
+                    id: "call_1".to_string(),
+                    name: "file.write".to_string(),
+                },
+                StreamChunk::ToolCallArgument {
+                    index: 0,
+                    text: r#"{"path":"a.txt"}"#.to_string(),
+                },
+                StreamChunk::Done,
+            ]
+        );
     }
 }

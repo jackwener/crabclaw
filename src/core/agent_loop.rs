@@ -18,6 +18,8 @@ use crate::tools::progressive::ProgressiveToolView;
 use crate::tools::registry::ToolContext;
 use crate::tools::schedule::Notifier;
 
+const ASSISTANT_COMMANDS_ENV_KEY: &str = "CRABCLAW_ENABLE_ASSISTANT_COMMANDS";
+
 /// Output from one agent loop turn.
 #[derive(Debug, Default)]
 pub struct LoopResult {
@@ -262,6 +264,14 @@ impl<'a> AgentLoop<'a> {
                 debug!(tools = ?newly_expanded, "agent_loop.hints_activated");
             }
 
+            if !assistant_commands_enabled() {
+                if let Err(e) = self.tape.append_message("assistant", &turn.assistant_text) {
+                    warn!("agent_loop.tape.write.error: {e}");
+                }
+                result.assistant_output = Some(turn.assistant_text.clone());
+                return;
+            }
+
             // Route assistant output through command detection
             let assistant_route = crate::core::router::route_assistant(
                 &turn.assistant_text,
@@ -327,6 +337,21 @@ impl<'a> AgentLoop<'a> {
         self.tool_view.reset();
         Ok(())
     }
+}
+
+fn assistant_commands_enabled() -> bool {
+    parse_bool_env(std::env::var(ASSISTANT_COMMANDS_ENV_KEY).ok().as_deref())
+}
+
+fn parse_bool_env(value: Option<&str>) -> bool {
+    value
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -429,5 +454,16 @@ mod tests {
     fn loop_result_to_reply_none_when_empty() {
         let result = LoopResult::default();
         assert!(result.to_reply().is_none());
+    }
+
+    #[test]
+    fn parse_bool_env_supports_common_truthy_values() {
+        assert!(parse_bool_env(Some("1")));
+        assert!(parse_bool_env(Some("true")));
+        assert!(parse_bool_env(Some("YES")));
+        assert!(parse_bool_env(Some("on")));
+        assert!(!parse_bool_env(Some("0")));
+        assert!(!parse_bool_env(Some("false")));
+        assert!(!parse_bool_env(None));
     }
 }

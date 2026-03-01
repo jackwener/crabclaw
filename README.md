@@ -13,7 +13,7 @@ CrabClaw is an OpenClaw-compatible agentic coding toolchain written in Rust.
 - **Skill engine**: Auto-discovers `.agent/skills/` and bridges them as LLM-callable tools
 - **Shell execution**: Run shell commands via `,git status` or `shell.exec` tool, with failure self-correction
 - **File operations**: `file.read`, `file.write`, `file.edit`, `file.list`, `file.search` with workspace-sandboxed security
-- **Assistant routing**: Model output is scanned for comma-commands and auto-executed (`route_assistant`)
+- **Assistant routing**: Comma-command auto-execution from assistant output is opt-in (`CRABCLAW_ENABLE_ASSISTANT_COMMANDS=true`)
 - **Tool calling loop**: Up to 5-iteration autonomous reasoning in REPL and Telegram
 - **Progressive tool view**: Token-efficient tool hinting — full schemas expand on demand
 - **Tape system**: Append-only JSONL session recording with anchors, search, handoff, and context truncation
@@ -109,6 +109,16 @@ Settings resolve in this order (first wins):
 ```bash
 CODEX_REASONING_EFFORT=high   # low | medium | high (default: high)
 ```
+
+### Assistant Command Auto-Execution (opt-in)
+
+By default, assistant text is treated as plain output and **not** executed as comma-commands.
+
+```bash
+CRABCLAW_ENABLE_ASSISTANT_COMMANDS=true
+```
+
+Only enable this in trusted environments.
 
 ## Usage
 

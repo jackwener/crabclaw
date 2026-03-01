@@ -16,7 +16,9 @@ use crate::tape::store::TapeStore;
 use crate::tools::registry::ToolContext;
 
 /// Default maximum tool-calling rounds per turn.
-const DEFAULT_MAX_TOOL_ITERATIONS: usize = 5;
+/// Zeroclaw uses 10; we use 15 to give complex tasks (web fetch + summarize)
+/// enough headroom without risking runaway loops.
+const DEFAULT_MAX_TOOL_ITERATIONS: usize = 15;
 
 /// Result of a single model turn (may include multiple tool-call rounds).
 #[derive(Debug, Default)]
@@ -128,6 +130,16 @@ impl<'a> ModelRunner<'a> {
                     break;
                 }
             }
+        }
+
+        if result.error.is_none()
+            && result.assistant_text.is_empty()
+            && result.tool_rounds >= self.max_tool_iterations
+        {
+            result.error = Some(format!(
+                "tool iteration limit reached ({}) without final assistant response",
+                self.max_tool_iterations
+            ));
         }
 
         result
@@ -248,6 +260,16 @@ impl<'a> ModelRunner<'a> {
                     break;
                 }
             }
+        }
+
+        if result.error.is_none()
+            && result.assistant_text.is_empty()
+            && result.tool_rounds >= self.max_tool_iterations
+        {
+            result.error = Some(format!(
+                "tool iteration limit reached ({}) without final assistant response",
+                self.max_tool_iterations
+            ));
         }
 
         result

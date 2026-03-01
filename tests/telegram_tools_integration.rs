@@ -160,7 +160,12 @@ async fn tool_loop_breaks_after_max_iterations() {
     )
     .await;
 
-    assert!(response.error.is_none());
+    assert!(
+        response
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("tool iteration limit reached"))
+    );
     assert!(response.assistant_output.is_none());
 }
 

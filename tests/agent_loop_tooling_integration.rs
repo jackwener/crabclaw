@@ -142,13 +142,15 @@ async fn file_edit_tool_call_modifies_file() {
 
 #[tokio::test]
 async fn tool_loop_breaks_after_max_iterations_without_hanging() {
+    const DEFAULT_MAX_TOOL_ITERATIONS: usize = 15;
+
     let mut server = mockito::Server::new_async().await;
     server
         .mock("POST", "/chat/completions")
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(tool_call_response("tools", "call_loop", "{}"))
-        .expect_at_most(5)
+        .expect(DEFAULT_MAX_TOOL_ITERATIONS)
         .create_async()
         .await;
 
@@ -164,6 +166,6 @@ async fn tool_loop_breaks_after_max_iterations_without_hanging() {
             .as_deref()
             .is_some_and(|e| e.contains("tool iteration limit reached"))
     );
-    assert_eq!(result.tool_rounds, 5);
+    assert_eq!(result.tool_rounds, DEFAULT_MAX_TOOL_ITERATIONS);
     assert!(result.assistant_output.is_none() || result.assistant_output.as_deref() == Some(""));
 }

@@ -1,8 +1,10 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 use teloxide::prelude::*;
 use teloxide::types::{ChatAction, MediaKind, MessageKind, ParseMode};
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::channels::base::{Channel, ChannelResponse};
@@ -70,6 +72,71 @@ impl Channel for TelegramChannel {
         info!("telegram.stop");
         Ok(())
     }
+}
+
+type TelegramNotifySender = mpsc::UnboundedSender<String>;
+
+static TELEGRAM_NOTIFY_SENDERS: OnceLock<Mutex<HashMap<i64, TelegramNotifySender>>> =
+    OnceLock::new();
+
+fn notifier_senders() -> &'static Mutex<HashMap<i64, TelegramNotifySender>> {
+    TELEGRAM_NOTIFY_SENDERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn get_or_create_notifier_sender(token: &str, chat_id: i64) -> TelegramNotifySender {
+    if let Some(existing) = notifier_senders()
+        .lock()
+        .ok()
+        .and_then(|senders| senders.get(&chat_id).cloned())
+    {
+        return existing;
+    }
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    {
+        let mut senders = notifier_senders().lock().unwrap();
+        senders.insert(chat_id, tx.clone());
+    }
+
+    let token = token.to_string();
+    tokio::spawn(async move {
+        let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+        let client = reqwest::Client::new();
+        while let Some(msg_text) = rx.recv().await {
+            match client
+                .post(&url)
+                .json(&serde_json::json!({
+                    "chat_id": chat_id,
+                    "text": msg_text,
+                }))
+                .send()
+                .await
+            {
+                Ok(resp) => {
+                    if !resp.status().is_success() {
+                        warn!(
+                            chat_id = chat_id,
+                            status = %resp.status(),
+                            "telegram.notifier.send_message_failed"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        chat_id = chat_id,
+                        error = %e,
+                        "telegram.notifier.send_message_error"
+                    );
+                }
+            }
+        }
+
+        if let Ok(mut senders) = notifier_senders().lock() {
+            senders.remove(&chat_id);
+        }
+    });
+
+    tx
 }
 
 async fn handle_message(
@@ -145,22 +212,11 @@ async fn handle_message(
     let notifier: Option<crate::tools::schedule::Notifier> = {
         let tg_token = config.telegram_token.clone().unwrap_or_default();
         let tg_chat_id = chat_id.0;
+        let sender = get_or_create_notifier_sender(&tg_token, tg_chat_id);
         Some(std::sync::Arc::new(move |text: String| {
-            let token = tg_token.clone();
-            let chat = tg_chat_id;
-            let msg_text = text;
-            // Fire-and-forget: spawn a thread to send notification via Telegram API
-            std::thread::spawn(move || {
-                let url = format!("https://api.telegram.org/bot{token}/sendMessage");
-                let client = reqwest::blocking::Client::new();
-                let _ = client
-                    .post(&url)
-                    .json(&serde_json::json!({
-                        "chat_id": chat,
-                        "text": msg_text,
-                    }))
-                    .send();
-            });
+            if sender.send(text).is_err() {
+                warn!(chat_id = tg_chat_id, "telegram.notifier.sender_closed");
+            }
         }))
     };
 

@@ -11,6 +11,14 @@ use std::path::Path;
 /// 4. Context / DateTime
 /// 5. Tools Section
 pub fn build_system_prompt(config_prompt: Option<&str>, workspace: &Path) -> String {
+    build_system_prompt_with_tools(config_prompt, workspace, None)
+}
+
+pub fn build_system_prompt_with_tools(
+    config_prompt: Option<&str>,
+    workspace: &Path,
+    tools_contract_override: Option<&str>,
+) -> String {
     let mut sections: Vec<String> = Vec::new();
 
     // 1. Identity Section
@@ -66,25 +74,13 @@ pub fn build_system_prompt(config_prompt: Option<&str>, workspace: &Path) -> Str
     );
     sections.push(context_section);
 
-    // 6. Tools Section (Static list matching the builtin tools)
-    sections.push(
-        "<tools_contract>\n\
-        You have access to the following built-in tools:\n\
-        - shell.exec: Execute shell commands in the user's workspace\n\
-        - file.read: Read file contents (workspace-sandboxed)\n\
-        - file.write: Write or create files (workspace-sandboxed)\n\
-        - file.list: List directory contents\n\
-        - file.search: Search for text within files (recursive grep)\n\
-        \n\
-        You can also access any discovered skills from the workspace.\n\
-        When helping the user:\n\
-        - Be concise and actionable\n\
-        - Use tools proactively when they would help answer the question\n\
-        - If a shell command fails, analyze the error and suggest fixes\n\
-        - Prefer reading files over asking the user to paste code\n\
-        </tools_contract>"
-            .to_string(),
-    );
+    // 6. Tools Section
+    let tools_contract = tools_contract_override
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(crate::tools::registry::builtin_tools_contract_block);
+    sections.push(tools_contract);
 
     sections.join("\n\n")
 }

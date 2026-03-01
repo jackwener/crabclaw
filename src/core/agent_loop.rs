@@ -9,7 +9,7 @@ use std::path::Path;
 use tracing::{debug, instrument, warn};
 
 use crate::core::config::AppConfig;
-use crate::core::context::{build_messages, build_system_prompt};
+use crate::core::context::{build_messages, build_system_prompt_with_tools};
 use crate::core::error::{CrabClawError, Result};
 use crate::core::model_runner::{ModelRunner, ModelTurnResult};
 use crate::core::router::route_user;
@@ -159,8 +159,12 @@ impl<'a> AgentLoop<'a> {
         };
 
         // 4. Build system prompt and messages from tape context
-        let system_prompt =
-            build_system_prompt(self.config.system_prompt.as_deref(), self.workspace);
+        let tools_prompt = self.tools_prompt_block();
+        let system_prompt = build_system_prompt_with_tools(
+            self.config.system_prompt.as_deref(),
+            self.workspace,
+            Some(&tools_prompt),
+        );
         let mut messages = build_messages(
             &self.tape,
             Some(&system_prompt),
@@ -221,8 +225,12 @@ impl<'a> AgentLoop<'a> {
         };
 
         // 4. Build system prompt and messages from tape context
-        let system_prompt =
-            build_system_prompt(self.config.system_prompt.as_deref(), self.workspace);
+        let tools_prompt = self.tools_prompt_block();
+        let system_prompt = build_system_prompt_with_tools(
+            self.config.system_prompt.as_deref(),
+            self.workspace,
+            Some(&tools_prompt),
+        );
         let mut messages = build_messages(
             &self.tape,
             Some(&system_prompt),
@@ -252,6 +260,10 @@ impl<'a> AgentLoop<'a> {
     /// Process the model turn result: record to tape and populate LoopResult.
     fn process_turn_result(&mut self, turn: &ModelTurnResult, result: &mut LoopResult) {
         result.tool_rounds = turn.tool_rounds;
+
+        for tool_name in &turn.invoked_tools {
+            self.tool_view.note_selected(tool_name);
+        }
 
         if let Some(err) = &turn.error {
             result.error = Some(err.clone());
@@ -336,6 +348,16 @@ impl<'a> AgentLoop<'a> {
             .map_err(CrabClawError::Io)?;
         self.tool_view.reset();
         Ok(())
+    }
+
+    fn tools_prompt_block(&self) -> String {
+        let compact = self.tool_view.compact_block();
+        let expanded = self.tool_view.expanded_block();
+        if expanded.is_empty() {
+            compact
+        } else {
+            format!("{compact}\n{expanded}")
+        }
     }
 }
 
@@ -465,5 +487,26 @@ mod tests {
         assert!(!parse_bool_env(Some("0")));
         assert!(!parse_bool_env(Some("false")));
         assert!(!parse_bool_env(None));
+    }
+
+    #[test]
+    fn process_turn_result_tracks_invoked_tools_without_assistant_text() {
+        let dir = tempdir().unwrap();
+        let config = test_config();
+        let mut loop_ = AgentLoop::open(&config, dir.path(), "test", None, None).unwrap();
+        let turn = ModelTurnResult {
+            assistant_text: String::new(),
+            tool_rounds: 1,
+            invoked_tools: vec!["file.read".to_string()],
+            error: Some("tool iteration limit reached".to_string()),
+        };
+        let mut result = LoopResult::default();
+
+        loop_.process_turn_result(&turn, &mut result);
+
+        assert_eq!(loop_.tool_view.expanded_count(), 1);
+        assert_eq!(result.tool_rounds, 1);
+        assert!(result.assistant_output.is_none());
+        assert!(result.error.is_some());
     }
 }

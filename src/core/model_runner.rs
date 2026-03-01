@@ -27,6 +27,8 @@ pub struct ModelTurnResult {
     pub assistant_text: String,
     /// Total tool-calling rounds executed.
     pub tool_rounds: usize,
+    /// Tool names invoked during this turn.
+    pub invoked_tools: Vec<String>,
     /// Error if any occurred during the turn.
     pub error: Option<String>,
 }
@@ -100,6 +102,7 @@ impl<'a> ModelRunner<'a> {
 
                         // Execute each tool and append results
                         for tc in tool_calls {
+                            push_unique_tool(&mut result.invoked_tools, &tc.function.name);
                             let tool_result = crate::tools::registry::execute_tool(
                                 &tc.function.name,
                                 &tc.function.arguments,
@@ -232,6 +235,7 @@ impl<'a> ModelRunner<'a> {
                         messages.push(Message::assistant_with_tool_calls(tool_calls.clone()));
 
                         for tc in &tool_calls {
+                            push_unique_tool(&mut result.invoked_tools, &tc.function.name);
                             let tool_result = crate::tools::registry::execute_tool(
                                 &tc.function.name,
                                 &tc.function.arguments,
@@ -276,6 +280,13 @@ impl<'a> ModelRunner<'a> {
     }
 }
 
+fn push_unique_tool(tools: &mut Vec<String>, name: &str) {
+    if tools.iter().any(|existing| existing == name) {
+        return;
+    }
+    tools.push(name.to_string());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +311,7 @@ mod tests {
         let result = ModelTurnResult::default();
         assert!(result.assistant_text.is_empty());
         assert_eq!(result.tool_rounds, 0);
+        assert!(result.invoked_tools.is_empty());
         assert!(result.error.is_none());
     }
 

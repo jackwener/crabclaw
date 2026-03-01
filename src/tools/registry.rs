@@ -117,72 +117,248 @@ impl Default for ToolRegistry {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct BuiltinToolSpec {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub parameters: serde_json::Value,
+}
+
+fn empty_tool_parameters() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {},
+        "required": []
+    })
+}
+
+pub fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {
+    vec![
+        BuiltinToolSpec {
+            name: "tape.info",
+            description: "Show tape session info (entry count, file path)",
+            parameters: empty_tool_parameters(),
+        },
+        BuiltinToolSpec {
+            name: "help",
+            description: "Show available commands",
+            parameters: empty_tool_parameters(),
+        },
+        BuiltinToolSpec {
+            name: "tools",
+            description: "List all registered tools",
+            parameters: empty_tool_parameters(),
+        },
+        BuiltinToolSpec {
+            name: "skills",
+            description: "List discovered skills from workspace",
+            parameters: empty_tool_parameters(),
+        },
+        BuiltinToolSpec {
+            name: "shell.exec",
+            description: "Execute a shell command in the workspace directory. Returns stdout, stderr, and exit code.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to execute"
+                    }
+                },
+                "required": ["command"]
+            }),
+        },
+        BuiltinToolSpec {
+            name: "file.read",
+            description: "Read the contents of a file in the workspace. Path is relative to workspace root.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file relative to the workspace root"
+                    }
+                },
+                "required": ["path"]
+            }),
+        },
+        BuiltinToolSpec {
+            name: "file.write",
+            description: "Write content to a file in the workspace. Creates parent directories if needed.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file relative to the workspace root"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The content to write to the file"
+                    }
+                },
+                "required": ["path", "content"]
+            }),
+        },
+        BuiltinToolSpec {
+            name: "file.list",
+            description: "List the contents of a directory in the workspace. Use empty path for workspace root.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the directory relative to the workspace root. Empty string for root."
+                    }
+                },
+                "required": []
+            }),
+        },
+        BuiltinToolSpec {
+            name: "file.search",
+            description: "Search for text within files in the workspace (recursive grep). Case-insensitive.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Text to search for (case-insensitive)"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional directory to search in, relative to workspace root. Empty for entire workspace."
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        BuiltinToolSpec {
+            name: "file.edit",
+            description: "Edit a file by searching for old text and replacing with new text. Supports replace_all.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file relative to the workspace root"
+                    },
+                    "old": {
+                        "type": "string",
+                        "description": "The exact text to search for in the file"
+                    },
+                    "new": {
+                        "type": "string",
+                        "description": "The replacement text"
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "If true, replace all occurrences. Default: false (replace first only)."
+                    }
+                },
+                "required": ["path", "old", "new"]
+            }),
+        },
+        BuiltinToolSpec {
+            name: "web.fetch",
+            description: "Fetch a URL and return the content as markdown. HTML is converted automatically.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to fetch"
+                    }
+                },
+                "required": ["url"]
+            }),
+        },
+        BuiltinToolSpec {
+            name: "web.search",
+            description: "Search the web for a query. Returns a search URL to fetch.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query"
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        BuiltinToolSpec {
+            name: "schedule.add",
+            description: "Schedule a reminder. Specify after_seconds (one-shot) or interval_seconds (repeating).",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "For 'reminder' mode: the text to deliver. For 'agent' mode: the prompt/task that the AI agent will execute (e.g. 'Fetch top 20 HackerNews posts and summarize them in Chinese')."
+                    },
+                    "after_seconds": {
+                        "type": "integer",
+                        "description": "Fire once after this many seconds (one-shot timer)"
+                    },
+                    "interval_seconds": {
+                        "type": "integer",
+                        "description": "Fire repeatedly at this interval in seconds"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["reminder", "agent"],
+                        "description": "IMPORTANT: Use 'agent' when the task requires action (web fetching, analysis, summarization, etc.). Use 'reminder' only for simple text notifications like 'drink water'. Default is 'reminder'."
+                    }
+                },
+                "required": ["message"]
+            }),
+        },
+        BuiltinToolSpec {
+            name: "schedule.list",
+            description: "List all active scheduled jobs.",
+            parameters: empty_tool_parameters(),
+        },
+        BuiltinToolSpec {
+            name: "schedule.remove",
+            description: "Remove a scheduled job by its ID.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "string",
+                        "description": "The ID of the job to remove"
+                    }
+                },
+                "required": ["job_id"]
+            }),
+        },
+    ]
+}
+
+pub fn builtin_tools_contract_block() -> String {
+    let mut lines = vec![
+        "<tools_contract>".to_string(),
+        "You have access to the following built-in tools:".to_string(),
+    ];
+    for spec in builtin_tool_specs() {
+        lines.push(format!("- {}: {}", spec.name, spec.description));
+    }
+    lines.push("You can also access any discovered skills from the workspace.".to_string());
+    lines.push("When helping the user:".to_string());
+    lines.push("- Be concise and actionable".to_string());
+    lines.push("- Use tools proactively when they would help answer the question".to_string());
+    lines.push("- If a shell command fails, analyze the error and suggest fixes".to_string());
+    lines.push("- Prefer reading files over asking the user to paste code".to_string());
+    lines.push("</tools_contract>".to_string());
+    lines.join("\n")
+}
+
 /// Create a registry with CrabClaw's built-in tools pre-registered.
 pub fn builtin_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
-    registry.register(
-        "tape.info",
-        "Show tape session info (entry count, file path)",
-        "builtin",
-    );
-    registry.register("help", "Show available commands", "builtin");
-    registry.register("tools", "List all registered tools", "builtin");
-    registry.register("skills", "List discovered skills from workspace", "builtin");
-    registry.register(
-        "shell.exec",
-        "Execute a shell command in the workspace directory. Returns stdout, stderr, and exit code.",
-        "builtin",
-    );
-    registry.register(
-        "file.read",
-        "Read the contents of a file in the workspace. Path is relative to workspace root.",
-        "builtin",
-    );
-    registry.register(
-        "file.write",
-        "Write content to a file in the workspace. Creates parent directories if needed.",
-        "builtin",
-    );
-    registry.register(
-        "file.list",
-        "List the contents of a directory in the workspace. Use empty path for workspace root.",
-        "builtin",
-    );
-    registry.register(
-        "file.search",
-        "Search for text within files in the workspace (recursive grep). Case-insensitive.",
-        "builtin",
-    );
-    registry.register(
-        "file.edit",
-        "Edit a file by searching for old text and replacing with new text. Supports replace_all.",
-        "builtin",
-    );
-    registry.register(
-        "web.fetch",
-        "Fetch a URL and return the content as markdown. HTML is converted automatically.",
-        "builtin",
-    );
-    registry.register(
-        "web.search",
-        "Search the web for a query. Returns a search URL to fetch.",
-        "builtin",
-    );
-    registry.register(
-        "schedule.add",
-        "Schedule a reminder. Specify after_seconds (one-shot) or interval_seconds (repeating).",
-        "builtin",
-    );
-    registry.register(
-        "schedule.list",
-        "List all active scheduled jobs.",
-        "builtin",
-    );
-    registry.register(
-        "schedule.remove",
-        "Remove a scheduled job by its ID.",
-        "builtin",
-    );
+    for spec in builtin_tool_specs() {
+        registry.register(spec.name, spec.description, "builtin");
+    }
     registry
 }
 
@@ -221,151 +397,11 @@ pub fn to_tool_definitions(registry: &ToolRegistry) -> Vec<crate::llm::api_types
 
 /// Return the JSON schema for a tool's parameters.
 pub fn tool_parameters(name: &str) -> serde_json::Value {
-    match name {
-        "shell.exec" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The shell command to execute"
-                }
-            },
-            "required": ["command"]
-        }),
-        "file.read" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file relative to the workspace root"
-                }
-            },
-            "required": ["path"]
-        }),
-        "file.write" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file relative to the workspace root"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The content to write to the file"
-                }
-            },
-            "required": ["path", "content"]
-        }),
-        "file.list" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the directory relative to the workspace root. Empty string for root."
-                }
-            },
-            "required": []
-        }),
-        "file.search" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Text to search for (case-insensitive)"
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Optional directory to search in, relative to workspace root. Empty for entire workspace."
-                }
-            },
-            "required": ["query"]
-        }),
-        "file.edit" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file relative to the workspace root"
-                },
-                "old": {
-                    "type": "string",
-                    "description": "The exact text to search for in the file"
-                },
-                "new": {
-                    "type": "string",
-                    "description": "The replacement text"
-                },
-                "replace_all": {
-                    "type": "boolean",
-                    "description": "If true, replace all occurrences. Default: false (replace first only)."
-                }
-            },
-            "required": ["path", "old", "new"]
-        }),
-        "web.fetch" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The URL to fetch"
-                }
-            },
-            "required": ["url"]
-        }),
-        "web.search" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query"
-                }
-            },
-            "required": ["query"]
-        }),
-        "schedule.add" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string",
-                    "description": "For 'reminder' mode: the text to deliver. For 'agent' mode: the prompt/task that the AI agent will execute (e.g. 'Fetch top 20 HackerNews posts and summarize them in Chinese')."
-                },
-                "after_seconds": {
-                    "type": "integer",
-                    "description": "Fire once after this many seconds (one-shot timer)"
-                },
-                "interval_seconds": {
-                    "type": "integer",
-                    "description": "Fire repeatedly at this interval in seconds"
-                },
-                "mode": {
-                    "type": "string",
-                    "enum": ["reminder", "agent"],
-                    "description": "IMPORTANT: Use 'agent' when the task requires action (web fetching, analysis, summarization, etc.). Use 'reminder' only for simple text notifications like 'drink water'. Default is 'reminder'."
-                }
-            },
-            "required": ["message"]
-        }),
-        "schedule.list" => serde_json::json!({
-            "type": "object",
-            "properties": {},
-            "required": []
-        }),
-        "schedule.remove" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "job_id": {
-                    "type": "string",
-                    "description": "The ID of the job to remove"
-                }
-            },
-            "required": ["job_id"]
-        }),
-        _ => serde_json::json!({
-            "type": "object",
-            "properties": {},
-            "required": []
-        }),
-    }
+    builtin_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == name)
+        .map(|spec| spec.parameters)
+        .unwrap_or_else(empty_tool_parameters)
 }
 
 /// Execute a tool by name and return the result as a string.

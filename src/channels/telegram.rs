@@ -180,23 +180,56 @@ async fn handle_message(
             let token = tg_token.clone();
             let chat = tg_chat_id;
             Box::pin(async move {
+                info!(
+                    prompt = %prompt,
+                    session_id = %session_id,
+                    "schedule.agent_runner: starting agent execution"
+                );
+
                 // Run the full agent pipeline with the prompt
                 let response =
                     process_message(&prompt, &config, &workspace, &session_id, None, None).await;
+
                 // Deliver the result to the Telegram chat
-                if let Some(reply) = response.to_reply() {
-                    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
-                    for chunk in split_message(&reply, 4096) {
-                        let html = markdown_to_telegram_html(&chunk);
-                        let _ = reqwest::Client::new()
-                            .post(&url)
-                            .json(&serde_json::json!({
-                                "chat_id": chat,
-                                "text": html,
-                                "parse_mode": "HTML",
-                            }))
-                            .send()
-                            .await;
+                match response.to_reply() {
+                    Some(reply) => {
+                        info!(
+                            reply_len = reply.len(),
+                            "schedule.agent_runner: delivering result to telegram"
+                        );
+                        let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+                        let client = reqwest::Client::new();
+                        for chunk in split_message(&reply, 4096) {
+                            let html = markdown_to_telegram_html(&chunk);
+                            match client
+                                .post(&url)
+                                .json(&serde_json::json!({
+                                    "chat_id": chat,
+                                    "text": html,
+                                    "parse_mode": "HTML",
+                                }))
+                                .send()
+                                .await
+                            {
+                                Ok(resp) => {
+                                    if !resp.status().is_success() {
+                                        warn!(
+                                            status = %resp.status(),
+                                            "schedule.agent_runner: telegram sendMessage failed"
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        error = %e,
+                                        "schedule.agent_runner: telegram sendMessage error"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        warn!("schedule.agent_runner: process_message returned empty response");
                     }
                 }
             })

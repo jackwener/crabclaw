@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tracing::debug;
+use tracing::{debug, error, info, warn};
 
 /// Whether a schedule job sends a static reminder or runs the agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,8 +262,22 @@ async fn fire_job(
 ) {
     // Agent mode: run the full agent pipeline with the message as prompt
     if let Some(runner) = agent_runner {
-        debug!(job_id = %job_id, "schedule: running agent");
-        runner(message.to_string()).await;
+        info!(job_id = %job_id, "schedule: running agent-mode job");
+        let fut = runner(message.to_string());
+        match tokio::task::spawn(fut).await {
+            Ok(()) => {
+                info!(job_id = %job_id, "schedule: agent-mode job completed");
+            }
+            Err(e) => {
+                error!(job_id = %job_id, error = %e, "schedule: agent-mode job panicked");
+                // Fall back to sending the error via notifier so the user knows
+                if let Some(notify_fn) = notifier {
+                    notify_fn(format!(
+                        "\u{26a0} [Schedule {job_id}] Agent job failed: {e}"
+                    ));
+                }
+            }
+        }
         return;
     }
 
@@ -272,6 +286,7 @@ async fn fire_job(
     if let Some(notify_fn) = notifier {
         notify_fn(text);
     } else {
+        warn!(job_id = %job_id, "schedule: no notifier available, printing to stderr");
         eprintln!("[schedule:{job_id}] {message}");
     }
 }

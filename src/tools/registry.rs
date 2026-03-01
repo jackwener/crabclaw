@@ -327,7 +327,7 @@ pub fn tool_parameters(name: &str) -> serde_json::Value {
             "properties": {
                 "message": {
                     "type": "string",
-                    "description": "The reminder message or agent prompt to execute when the schedule fires"
+                    "description": "For 'reminder' mode: the text to deliver. For 'agent' mode: the prompt/task that the AI agent will execute (e.g. 'Fetch top 20 HackerNews posts and summarize them in Chinese')."
                 },
                 "after_seconds": {
                     "type": "integer",
@@ -340,7 +340,7 @@ pub fn tool_parameters(name: &str) -> serde_json::Value {
                 "mode": {
                     "type": "string",
                     "enum": ["reminder", "agent"],
-                    "description": "Job mode. 'reminder' (default) sends the message as-is. 'agent' runs the full AI agent with the message as prompt, enabling tool use (web.fetch, etc.) and intelligent responses."
+                    "description": "IMPORTANT: Use 'agent' when the task requires action (web fetching, analysis, summarization, etc.). Use 'reminder' only for simple text notifications like 'drink water'. Default is 'reminder'."
                 }
             },
             "required": ["message"]

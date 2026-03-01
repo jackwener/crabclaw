@@ -147,19 +147,30 @@ pub async fn send_chat_request_stream(
                 request,
                 system_prompt.as_deref(),
             )
-            .await;
-            let (tx, rx) = mpsc::unbounded_channel();
-            match result {
-                Ok(resp) => {
-                    for chunk in codex_response_to_stream_chunks(&resp) {
-                        let _ = tx.send(Ok(chunk));
-                    }
+            .await
+            .map(|resp| {
+                let (tx, rx) = mpsc::unbounded_channel();
+                for chunk in codex_response_to_stream_chunks(&resp) {
+                    let _ = tx.send(Ok(chunk));
                 }
-                Err(e) => {
-                    let _ = tx.send(Err(e));
+                rx
+            });
+
+            match &result {
+                Err(CrabClawError::RateLimit(_)) if attempt < MAX_RETRIES => {
+                    warn!(attempt = attempt + 1, delay_ms, "rate limited, retrying");
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    delay_ms *= 2;
+                    continue;
                 }
+                Err(CrabClawError::Network(_)) if attempt < MAX_RETRIES => {
+                    warn!(attempt = attempt + 1, delay_ms, "network error, retrying");
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    delay_ms *= 2;
+                    continue;
+                }
+                _ => return result,
             }
-            return Ok(rx);
         }
 
         let result = if let Some(anthropic_model) = request.model.strip_prefix("anthropic:") {

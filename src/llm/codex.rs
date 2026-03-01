@@ -25,6 +25,15 @@ fn decode_tool_name(name: &str) -> String {
     name.replace("__", ".")
 }
 
+fn classify_codex_http_error(status: reqwest::StatusCode, body: &str) -> CrabClawError {
+    let message = format!("Codex API error (HTTP {status}): {body}");
+    match status.as_u16() {
+        429 => CrabClawError::RateLimit(message),
+        401 | 403 => CrabClawError::Auth(message),
+        _ => CrabClawError::Api(message),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Request types (Responses API)
 // ---------------------------------------------------------------------------
@@ -182,9 +191,7 @@ pub async fn send_codex_request(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(CrabClawError::Api(format!(
-            "Codex API error (HTTP {status}): {body}"
-        )));
+        return Err(classify_codex_http_error(status, &body));
     }
 
     // Parse SSE response
@@ -705,6 +712,43 @@ mod tests {
     fn reasoning_effort_clamping() {
         assert_eq!(resolve_reasoning_effort("gpt-5-codex"), "high");
         assert_eq!(resolve_reasoning_effort("gpt-5.3-codex"), "high");
+    }
+
+    #[test]
+    fn classify_codex_http_error_maps_429_to_rate_limit() {
+        let err = classify_codex_http_error(reqwest::StatusCode::TOO_MANY_REQUESTS, "slow down");
+        match err {
+            CrabClawError::RateLimit(msg) => {
+                assert!(msg.contains("429"));
+                assert!(msg.contains("slow down"));
+            }
+            other => panic!("expected RateLimit error, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn classify_codex_http_error_maps_401_to_auth() {
+        let err = classify_codex_http_error(reqwest::StatusCode::UNAUTHORIZED, "invalid token");
+        match err {
+            CrabClawError::Auth(msg) => {
+                assert!(msg.contains("401"));
+                assert!(msg.contains("invalid token"));
+            }
+            other => panic!("expected Auth error, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn classify_codex_http_error_maps_500_to_api() {
+        let err =
+            classify_codex_http_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "internal error");
+        match err {
+            CrabClawError::Api(msg) => {
+                assert!(msg.contains("500"));
+                assert!(msg.contains("internal error"));
+            }
+            other => panic!("expected Api error, got: {other}"),
+        }
     }
 
     #[test]

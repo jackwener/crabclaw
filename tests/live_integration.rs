@@ -53,7 +53,7 @@ async fn send_live_in(
     workspace: &std::path::Path,
     session: &str,
 ) -> crabclaw::channels::base::ChannelResponse {
-    process_message(text, config, workspace, session, None).await
+    process_message(text, config, workspace, session, None, None).await
 }
 
 /// Macro to skip test when no live config is available.
@@ -84,6 +84,7 @@ async fn live_model_replies_to_simple_message() {
         &config,
         workspace.path(),
         "live_test:chat",
+        None,
         None,
     )
     .await;
@@ -334,6 +335,7 @@ async fn live_agent_loop_basic_reply() {
         workspace.path(),
         "live_al_basic",
         None,
+        None,
     )
     .unwrap();
 
@@ -357,6 +359,7 @@ async fn live_agent_loop_streaming() {
         &config,
         workspace.path(),
         "live_al_stream",
+        None,
         None,
     )
     .unwrap();
@@ -397,6 +400,7 @@ async fn live_agent_loop_tool_call() {
         &config,
         workspace.path(),
         "live_al_tool",
+        None,
         None,
     )
     .unwrap();
@@ -457,6 +461,7 @@ async fn live_agent_loop_file_edit() {
         &config,
         workspace.path(),
         "live_al_edit",
+        None,
         None,
     )
     .unwrap();

@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
-use crate::tools::schedule::Notifier;
+use crate::tools::schedule::{AgentRunner, Notifier};
 
 /// Execution context passed to tools during a model turn.
 ///
-/// Carries channel-specific capabilities (e.g. notification delivery)
-/// so each tool invocation has access to its session context.
+/// Carries channel-specific capabilities (e.g. notification delivery,
+/// agent execution) so each tool invocation has access to its session context.
 /// Inspired by Bub's context-bound callback pattern.
 #[derive(Clone, Default)]
 pub struct ToolContext {
@@ -16,18 +16,26 @@ pub struct ToolContext {
     /// When set, schedule jobs capture this to deliver reminders
     /// back to the originating channel (e.g. Telegram chat).
     pub notifier: Option<Notifier>,
+    /// Optional agent runner for scheduled agent-mode jobs.
+    /// When set, schedule jobs can run the full agent pipeline
+    /// (LLM + tools) and deliver results on fire.
+    pub agent_runner: Option<AgentRunner>,
 }
 
 impl ToolContext {
     /// Create an empty context (no notification capability).
     pub fn empty() -> Self {
-        Self { notifier: None }
+        Self {
+            notifier: None,
+            agent_runner: None,
+        }
     }
 
     /// Create a context with a notification callback.
     pub fn with_notifier<F: Fn(String) + Send + Sync + 'static>(f: F) -> Self {
         Self {
             notifier: Some(Arc::new(f)),
+            agent_runner: None,
         }
     }
 }
@@ -319,7 +327,7 @@ pub fn tool_parameters(name: &str) -> serde_json::Value {
             "properties": {
                 "message": {
                     "type": "string",
-                    "description": "The reminder message to deliver when the schedule fires"
+                    "description": "The reminder message or agent prompt to execute when the schedule fires"
                 },
                 "after_seconds": {
                     "type": "integer",
@@ -328,6 +336,11 @@ pub fn tool_parameters(name: &str) -> serde_json::Value {
                 "interval_seconds": {
                     "type": "integer",
                     "description": "Fire repeatedly at this interval in seconds"
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["reminder", "agent"],
+                    "description": "Job mode. 'reminder' (default) sends the message as-is. 'agent' runs the full AI agent with the message as prompt, enabling tool use (web.fetch, etc.) and intelligent responses."
                 }
             },
             "required": ["message"]
@@ -503,7 +516,7 @@ pub fn execute_tool(
             web::web_search(&query)
         }
         "schedule.add" => {
-            use crate::tools::schedule::global_scheduler;
+            use crate::tools::schedule::{JobMode, global_scheduler};
             let message = parse_json_arg(args, "message").unwrap_or_default();
             if message.is_empty() {
                 return "Error: 'message' argument is required.".to_string();
@@ -516,11 +529,22 @@ pub fn execute_tool(
                 Ok(v) => v["interval_seconds"].as_u64(),
                 Err(_) => None,
             };
+            let mode = match parse_json_arg(args, "mode").as_deref() {
+                Some("agent") => JobMode::Agent,
+                _ => JobMode::Reminder,
+            };
+            let agent_runner = if mode == JobMode::Agent {
+                ctx.agent_runner.clone()
+            } else {
+                None
+            };
             global_scheduler().add_job(
                 &message,
                 after_seconds,
                 interval_seconds,
+                mode,
                 ctx.notifier.clone(),
+                agent_runner,
             )
         }
         "schedule.list" => {

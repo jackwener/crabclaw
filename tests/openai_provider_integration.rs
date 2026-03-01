@@ -19,7 +19,8 @@ async fn routes_to_openai_model_and_returns_reply() {
 
     let config = openai_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response = process_message("hi", &config, workspace.path(), "test:openai", None).await;
+    let response =
+        process_message("hi", &config, workspace.path(), "test:openai", None, None).await;
 
     mock.assert_async().await;
     assert_ok_reply(&response, "Hello from OpenAI-compatible mock!");
@@ -53,6 +54,7 @@ async fn openai_tool_call_then_final_reply() {
         &config,
         workspace.path(),
         "test:openai_tool",
+        None,
         None,
     )
     .await;
@@ -98,6 +100,7 @@ async fn openai_error_during_tool_loop_is_propagated() {
         workspace.path(),
         "test:openai_err",
         None,
+        None,
     )
     .await;
     assert_has_error(&response);
@@ -122,6 +125,7 @@ async fn openai_429_rate_limit_propagated() {
         &config,
         workspace.path(),
         "test:openai_rate",
+        None,
         None,
     )
     .await;
@@ -158,6 +162,7 @@ async fn openai_system_prompt_includes_workspace_override() {
         workspace.path(),
         "test:ws_prompt_openai",
         None,
+        None,
     )
     .await;
     mock.assert_async().await;
@@ -191,6 +196,7 @@ async fn openai_multi_turn_keeps_context() {
         workspace.path(),
         "test:openai_multi",
         None,
+        None,
     )
     .await;
     let r2 = process_message(
@@ -198,6 +204,7 @@ async fn openai_multi_turn_keeps_context() {
         &config,
         workspace.path(),
         "test:openai_multi",
+        None,
         None,
     )
     .await;

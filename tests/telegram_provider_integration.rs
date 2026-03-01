@@ -24,7 +24,15 @@ async fn routes_to_anthropic_model_and_returns_reply() {
 
     let config = anthropic_config(&server.url());
     let workspace = TempDir::new().unwrap();
-    let response = process_message("hi", &config, workspace.path(), "test:anthropic", None).await;
+    let response = process_message(
+        "hi",
+        &config,
+        workspace.path(),
+        "test:anthropic",
+        None,
+        None,
+    )
+    .await;
 
     mock.assert_async().await;
     assert_ok_reply(&response, "Hello from Anthropic mock LLM!");
@@ -69,6 +77,7 @@ async fn anthropic_tool_call_then_final_reply() {
         &config,
         workspace.path(),
         "test:anth_tool",
+        None,
         None,
     )
     .await;
@@ -118,6 +127,7 @@ async fn anthropic_error_during_tool_loop_is_propagated() {
         workspace.path(),
         "test:anth_err",
         None,
+        None,
     )
     .await;
     assert_has_error(&response);
@@ -152,7 +162,15 @@ async fn system_prompt_includes_workspace_override_for_anthropic() {
     )
     .unwrap();
 
-    let _ = process_message("hi", &config, workspace.path(), "test:ws_prompt", None).await;
+    let _ = process_message(
+        "hi",
+        &config,
+        workspace.path(),
+        "test:ws_prompt",
+        None,
+        None,
+    )
+    .await;
     mock.assert_async().await;
 }
 
@@ -175,6 +193,7 @@ async fn openai_system_prompt_contains_identity_contract() {
         &config,
         workspace.path(),
         "test:prompt_openai",
+        None,
         None,
     )
     .await;

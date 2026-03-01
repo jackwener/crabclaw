@@ -1,14 +1,37 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tracing::debug;
+
+/// Whether a schedule job sends a static reminder or runs the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobMode {
+    /// Just deliver the message text (cheap, no LLM call).
+    Reminder,
+    /// Run the full agent pipeline with the message as prompt.
+    /// The agent can call tools (web.fetch, etc.) and the result
+    /// is delivered back to the user.
+    Agent,
+}
+
+impl std::fmt::Display for JobMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JobMode::Reminder => write!(f, "reminder"),
+            JobMode::Agent => write!(f, "agent"),
+        }
+    }
+}
 
 /// A scheduled job with its metadata.
 #[derive(Debug, Clone)]
 struct ScheduledJob {
     id: String,
     message: String,
+    mode: JobMode,
     created_at: Instant,
     /// For one-shot: fires after this duration from creation
     after: Option<Duration>,
@@ -36,6 +59,13 @@ impl ScheduledJob {
 
 /// Notification callback type — each job captures its own notifier.
 pub type Notifier = Arc<dyn Fn(String) + Send + Sync>;
+
+/// Async agent runner callback — runs the full agent pipeline with a prompt.
+///
+/// Captures config, workspace, session_id, and delivery mechanism.
+/// When invoked, it calls the agent loop and sends the result to the user.
+pub type AgentRunner =
+    Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// In-memory scheduler that manages timed jobs.
 ///
@@ -65,20 +95,28 @@ impl SchedulerService {
         }
     }
 
-    /// Add a scheduled job with an optional per-job notification callback.
+    /// Add a scheduled job with optional notification and agent runner callbacks.
     ///
-    /// When the job fires, it calls `notifier(message)` if provided,
-    /// otherwise falls back to `eprintln!`. Each job captures its own
-    /// notifier closure — Bub-style context-bound callbacks.
+    /// - **Reminder mode**: fires `notifier(message)` — cheap, no LLM call.
+    /// - **Agent mode**: fires `agent_runner(message).await` — runs full agent
+    ///   pipeline (LLM + tools) and delivers the result.
+    ///
+    /// Each job captures its own callbacks — context-bound closures.
     pub fn add_job(
         &self,
         message: &str,
         after_seconds: Option<u64>,
         interval_seconds: Option<u64>,
+        mode: JobMode,
         notifier: Option<Notifier>,
+        agent_runner: Option<AgentRunner>,
     ) -> String {
         if after_seconds.is_none() && interval_seconds.is_none() {
             return "Error: must specify either 'after_seconds' or 'interval_seconds'".to_string();
+        }
+        if mode == JobMode::Agent && agent_runner.is_none() {
+            return "Error: agent mode requires an agent runner (not available in this channel)"
+                .to_string();
         }
 
         let id = generate_job_id();
@@ -88,6 +126,7 @@ impl SchedulerService {
         let job = ScheduledJob {
             id: id.clone(),
             message: message.to_string(),
+            mode,
             created_at: Instant::now(),
             after,
             interval,
@@ -126,8 +165,8 @@ impl SchedulerService {
                     jobs.get(&job_id).map(|j| j.cancelled).unwrap_or(true)
                 };
                 if !cancelled {
-                    debug!(job_id = %job_id, "schedule: firing one-shot reminder");
-                    fire(&notifier, &job_id, &msg);
+                    debug!(job_id = %job_id, "schedule: firing one-shot");
+                    fire_job(&notifier, &agent_runner, &job_id, &msg).await;
                     let mut jobs = jobs_ref.lock().unwrap();
                     jobs.remove(&job_id);
                 }
@@ -146,8 +185,8 @@ impl SchedulerService {
                     if cancelled {
                         break;
                     }
-                    debug!(job_id = %job_id, "schedule: firing interval reminder");
-                    fire(&notifier, &job_id, &msg);
+                    debug!(job_id = %job_id, "schedule: firing interval");
+                    fire_job(&notifier, &agent_runner, &job_id, &msg).await;
                 }
                 let mut handles = handles_ref.lock().unwrap();
                 handles.remove(&job_id);
@@ -172,8 +211,9 @@ impl SchedulerService {
             .filter(|j| !j.cancelled)
             .map(|j| {
                 format!(
-                    "{} schedule={} msg={}",
+                    "{} mode={} schedule={} msg={}",
                     j.id,
+                    j.mode,
                     j.schedule_description(),
                     j.message
                 )
@@ -213,8 +253,21 @@ impl SchedulerService {
     }
 }
 
-/// Fire a notification — calls the per-job notifier, falls back to eprintln.
-fn fire(notifier: &Option<Notifier>, job_id: &str, message: &str) {
+/// Fire a job — either runs the agent pipeline or sends a simple notification.
+async fn fire_job(
+    notifier: &Option<Notifier>,
+    agent_runner: &Option<AgentRunner>,
+    job_id: &str,
+    message: &str,
+) {
+    // Agent mode: run the full agent pipeline with the message as prompt
+    if let Some(runner) = agent_runner {
+        debug!(job_id = %job_id, "schedule: running agent");
+        runner(message.to_string()).await;
+        return;
+    }
+
+    // Reminder mode: just send the message text
     let text = format!("\u{23f0} [Reminder: {job_id}] {message}");
     if let Some(notify_fn) = notifier {
         notify_fn(text);
@@ -254,7 +307,14 @@ mod tests {
     #[tokio::test]
     async fn add_after_seconds_returns_scheduled() {
         let svc = fresh_service();
-        let result = svc.add_job("test reminder", Some(60), None, None);
+        let result = svc.add_job(
+            "test reminder",
+            Some(60),
+            None,
+            JobMode::Reminder,
+            None,
+            None,
+        );
         assert!(result.starts_with("scheduled:"), "got: {result}");
         assert!(result.contains("once in"), "got: {result}");
     }
@@ -262,7 +322,7 @@ mod tests {
     #[tokio::test]
     async fn add_interval_returns_scheduled() {
         let svc = fresh_service();
-        let result = svc.add_job("repeating", None, Some(300), None);
+        let result = svc.add_job("repeating", None, Some(300), JobMode::Reminder, None, None);
         assert!(result.starts_with("scheduled:"), "got: {result}");
         assert!(result.contains("every 300s"), "got: {result}");
     }
@@ -270,7 +330,7 @@ mod tests {
     #[test]
     fn add_requires_timing_parameter() {
         let svc = fresh_service();
-        let result = svc.add_job("no timing", None, None, None);
+        let result = svc.add_job("no timing", None, None, JobMode::Reminder, None, None);
         assert!(result.starts_with("Error:"), "got: {result}");
     }
 
@@ -284,8 +344,8 @@ mod tests {
     #[tokio::test]
     async fn list_with_jobs() {
         let svc = fresh_service();
-        svc.add_job("reminder 1", Some(60), None, None);
-        svc.add_job("reminder 2", None, Some(120), None);
+        svc.add_job("reminder 1", Some(60), None, JobMode::Reminder, None, None);
+        svc.add_job("reminder 2", None, Some(120), JobMode::Reminder, None, None);
         let result = svc.list_jobs();
         assert!(result.contains("reminder 1"), "got: {result}");
         assert!(result.contains("reminder 2"), "got: {result}");
@@ -294,7 +354,7 @@ mod tests {
     #[tokio::test]
     async fn remove_existing_job() {
         let svc = fresh_service();
-        let add_result = svc.add_job("to remove", Some(60), None, None);
+        let add_result = svc.add_job("to remove", Some(60), None, JobMode::Reminder, None, None);
         let job_id = add_result
             .strip_prefix("scheduled: ")
             .unwrap()
@@ -318,9 +378,9 @@ mod tests {
     async fn active_count_tracks_correctly() {
         let svc = fresh_service();
         assert_eq!(svc.active_count(), 0);
-        svc.add_job("one", Some(60), None, None);
+        svc.add_job("one", Some(60), None, JobMode::Reminder, None, None);
         assert_eq!(svc.active_count(), 1);
-        svc.add_job("two", Some(120), None, None);
+        svc.add_job("two", Some(120), None, JobMode::Reminder, None, None);
         assert_eq!(svc.active_count(), 2);
     }
 
@@ -334,7 +394,14 @@ mod tests {
         });
 
         // One-shot job with 0-second delay
-        svc.add_job("drink water", Some(0), None, Some(notifier));
+        svc.add_job(
+            "drink water",
+            Some(0),
+            None,
+            JobMode::Reminder,
+            Some(notifier),
+            None,
+        );
 
         // Wait for it to fire
         tokio::time::sleep(Duration::from_millis(100)).await;

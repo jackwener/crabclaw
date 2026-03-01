@@ -33,6 +33,7 @@ async fn openai_tool_calling_loop_returns_final_reply() {
         workspace.path(),
         "test:tools",
         None,
+        None,
     )
     .await;
 
@@ -81,6 +82,7 @@ async fn file_write_then_read_tool_sequence() {
         workspace.path(),
         "test:file_ops",
         None,
+        None,
     )
     .await;
 
@@ -119,6 +121,7 @@ async fn unknown_tool_name_recovery() {
         workspace.path(),
         "test:unknown_tool",
         None,
+        None,
     )
     .await;
 
@@ -152,6 +155,7 @@ async fn tool_loop_breaks_after_max_iterations() {
         &config,
         workspace.path(),
         "test:max_iter",
+        None,
         None,
     )
     .await;
@@ -189,6 +193,7 @@ async fn malformed_file_write_args_model_recovers() {
         &config,
         workspace.path(),
         "test:bad_args",
+        None,
         None,
     )
     .await;

@@ -168,7 +168,8 @@ fn run_command(args: RunArgs) -> Result<()> {
         return Ok(());
     }
 
-    let mut agent = crate::core::agent_loop::AgentLoop::open(&config, &workspace, "default", None)?;
+    let mut agent =
+        crate::core::agent_loop::AgentLoop::open(&config, &workspace, "default", None, None)?;
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

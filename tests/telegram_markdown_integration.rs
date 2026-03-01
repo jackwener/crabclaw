@@ -44,6 +44,7 @@ async fn render_via_pipeline(markdown: &str) -> String {
         workspace.path(),
         "test:md_render",
         None,
+        None,
     )
     .await;
 

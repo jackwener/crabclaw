@@ -13,7 +13,7 @@ use crate::core::error::{CrabClawError, Result};
 /// which handles command routing, tool calling, tape recording,
 /// and streaming output.
 pub fn run_interactive(config: &AppConfig, workspace: &Path) -> Result<()> {
-    let mut agent = AgentLoop::open(config, workspace, "default", None)?;
+    let mut agent = AgentLoop::open(config, workspace, "default", None, None)?;
 
     let mut editor = DefaultEditor::new()
         .map_err(|e| CrabClawError::Config(format!("failed to init editor: {e}")))?;

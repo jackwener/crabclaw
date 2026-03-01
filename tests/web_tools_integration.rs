@@ -56,6 +56,7 @@ async fn e2e_web_fetch_tool_returns_page_content() {
         workspace.path(),
         "test:web_fetch",
         None,
+        None,
     )
     .await;
 
@@ -95,6 +96,7 @@ async fn e2e_web_search_tool_returns_search_url() {
         workspace.path(),
         "test:web_search",
         None,
+        None,
     )
     .await;
 
@@ -129,6 +131,7 @@ async fn e2e_web_fetch_missing_url_returns_error() {
         &config,
         workspace.path(),
         "test:web_fetch_no_url",
+        None,
         None,
     )
     .await;
@@ -179,6 +182,7 @@ async fn e2e_web_fetch_plain_text_passthrough() {
         &config,
         workspace.path(),
         "test:web_fetch_txt",
+        None,
         None,
     )
     .await;
